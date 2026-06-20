@@ -1,0 +1,41 @@
+{
+  "name": "scaffold-extension",
+  "displayName": "Scaffold — Writing Companion",
+  "version": "1.0.0",
+  "description": "Track your writing progress against assignment requirements",
+  "private": true,
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "@sentry/browser": "^8.46.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "plasmo": "^0.89.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^26.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.7.2"
+  },
+  "manifest": {
+    "name": "Scaffold — Writing Companion",
+    "description": "Track your assignment progress as you write",
+    "permissions": [
+      "storage",
+      "activeTab",
+      "scripting"
+    ],
+    "host_permissions": [
+      "https://docs.google.com/*",
+      "https://www.notion.so/*",
+      "https://notion.so/*"
+    ]
+  }
+}
