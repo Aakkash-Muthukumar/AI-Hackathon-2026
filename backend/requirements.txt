@@ -1,0 +1,16 @@
+anthropic>=0.40.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+redis[hiredis]>=5.2.0
+supabase>=2.10.0
+browserbase>=1.2.0
+stagehand>=0.1.0
+sentry-sdk[fastapi]>=2.19.0
+arize-phoenix>=5.7.0
+openinference-instrumentation-anthropic>=0.1.15
+opentelemetry-sdk>=1.29.0
+python-multipart>=0.0.20
+httpx>=0.28.0
+python-dotenv>=1.0.0
