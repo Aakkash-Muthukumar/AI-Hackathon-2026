@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { Header } from "@/components/Header";
@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   Lock,
   ChevronRight,
+  LogOut,
+  MonitorSmartphone,
 } from "lucide-react";
 
 interface Platform {
@@ -18,69 +20,112 @@ interface Platform {
   status: string;
 }
 
-interface CredentialField {
-  key: string;
-  label: string;
-  type: "text" | "password" | "email" | "url";
-  placeholder?: string;
+// Stable user ID stored in localStorage so the backend can look up saved contexts.
+function getUserId(): string {
+  if (typeof window === "undefined") return "anon";
+  const stored = localStorage.getItem("scaffold_user_id");
+  if (stored) return stored;
+  const id = crypto.randomUUID();
+  localStorage.setItem("scaffold_user_id", id);
+  return id;
 }
 
-// Credential fields required by each backend discovery handler
-// (see backend/services/browserbase_service.py).
-const CREDENTIAL_FIELDS: Record<string, CredentialField[]> = {
-  canvas: [
-    { key: "canvas_url", label: "Canvas URL", type: "url", placeholder: "https://canvas.instructure.com" },
-    { key: "username", label: "Username", type: "text" },
-    { key: "password", label: "Password", type: "password" },
-  ],
-  notion: [
-    { key: "email", label: "Email", type: "email" },
-    { key: "password", label: "Password", type: "password" },
-  ],
-  google_classroom: [
-    { key: "email", label: "Google account email", type: "email" },
-  ],
-};
+type Step = "idle" | "opening" | "live" | "scraping" | "done";
+
+interface ActiveSession {
+  platform: string;
+  sessionId: string;
+  contextId: string;
+  liveViewUrl: string;
+}
 
 export default function Connect() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [connected, setConnected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState<string | null>(null);
-  const [credentials, setCredentials] = useState<Record<string, string>>({});
-  const [syncing, setSyncing] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [step, setStep] = useState<Step>("idle");
+  const [session, setSession] = useState<ActiveSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [doneMessage, setDoneMessage] = useState<string | null>(null);
+
+  const userId = getUserId();
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ platforms: ps }, { connected_platforms }] = await Promise.all([
+        api.discovery.supported(),
+        api.discovery.status(userId),
+      ]);
+      setPlatforms(ps);
+      setConnected(connected_platforms);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load platforms");
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
 
   useEffect(() => {
-    api.discovery
-      .supported()
-      .then((res) => setPlatforms(res.platforms))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  }, []);
+    loadData();
+  }, [loadData]);
 
-  function selectPlatform(id: string) {
-    setActive(id);
-    setCredentials({});
-    setMessage(null);
+  async function handleConnect(platformId: string) {
+    setStep("opening");
+    setError(null);
+    setDoneMessage(null);
+    try {
+      const res = await api.discovery.connect(platformId, userId);
+      setSession({
+        platform: platformId,
+        sessionId: res.session_id,
+        contextId: res.context_id,
+        liveViewUrl: res.live_view_url,
+      });
+      setStep("live");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open browser session");
+      setStep("idle");
+    }
+  }
+
+  async function handleScrape() {
+    if (!session) return;
+    setStep("scraping");
+    setError(null);
+    try {
+      await api.discovery.scrape(
+        session.platform,
+        session.sessionId,
+        session.contextId,
+        userId
+      );
+      setDoneMessage(
+        `Scanning ${session.platform} for assignments. They'll appear on the dashboard in a few seconds.`
+      );
+      setStep("done");
+      setSession(null);
+      setConnected((prev) =>
+        prev.includes(session.platform) ? prev : [...prev, session.platform]
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Scan failed");
+      setStep("live");
+    }
+  }
+
+  function handleCancel() {
+    setSession(null);
+    setStep("idle");
     setError(null);
   }
 
-  async function handleSync(e: React.FormEvent) {
-    e.preventDefault();
-    if (!active) return;
-    setSyncing(true);
-    setMessage(null);
-    setError(null);
+  async function handleDisconnect(platformId: string) {
     try {
-      const res = await api.discovery.sync(active, credentials);
-      setMessage(res.message);
-      setActive(null);
-      setCredentials({});
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sync failed.");
-    } finally {
-      setSyncing(false);
+      await api.discovery.disconnect(userId, platformId);
+      setConnected((prev) => prev.filter((p) => p !== platformId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not disconnect");
     }
   }
 
@@ -99,14 +144,14 @@ export default function Connect() {
 
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Connect a platform</h1>
         <p className="text-sm text-gray-500 mb-8">
-          Auto-discover assignments from your learning tools. Credentials are sent to the
-          backend to drive a one-time browser session and are not stored by the dashboard.
+          A real browser opens and navigates to your platform. Log in yourself — Scaffold
+          never sees your credentials. Once logged in, click <strong>Scan my tasks</strong>.
         </p>
 
-        {message && (
+        {doneMessage && (
           <div className="mb-6 flex items-start gap-2 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
             <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
-            <span>{message}</span>
+            <span>{doneMessage}</span>
           </div>
         )}
         {error && (
@@ -115,6 +160,50 @@ export default function Connect() {
           </div>
         )}
 
+        {/* Live view panel */}
+        {step === "live" && session && (
+          <div className="mb-8 rounded-xl border border-indigo-200 bg-white overflow-hidden shadow-sm">
+            <div className="flex items-center justify-between px-5 py-3 bg-indigo-50 border-b border-indigo-100">
+              <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700">
+                <MonitorSmartphone size={16} />
+                Live browser — {session.platform}
+              </div>
+              <span className="text-xs text-indigo-500">
+                Log in, then click &quot;Scan my tasks&quot; below
+              </span>
+            </div>
+            <iframe
+              src={session.liveViewUrl}
+              className="w-full"
+              style={{ height: 520, border: "none" }}
+              allow="clipboard-read; clipboard-write"
+            />
+            <div className="flex items-center gap-3 px-5 py-4 border-t border-gray-100 bg-gray-50">
+              <button
+                onClick={handleScrape}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <CheckCircle2 size={16} />
+                I&apos;m logged in — scan my tasks
+              </button>
+              <button
+                onClick={handleCancel}
+                className="px-4 py-2.5 text-sm text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "scraping" && (
+          <div className="mb-8 flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-5 py-4 text-sm text-indigo-700">
+            <Loader2 size={16} className="animate-spin shrink-0" />
+            Extracting assignments in the background…
+          </div>
+        )}
+
+        {/* Platform list */}
         {loading ? (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
@@ -125,72 +214,64 @@ export default function Connect() {
           <div className="space-y-3">
             {platforms.map((p) => {
               const supported = p.status === "supported";
-              const isActive = active === p.id;
+              const isConnected = connected.includes(p.id);
+              const isOpening = step === "opening" && session?.platform === p.id;
+
               return (
                 <div
                   key={p.id}
-                  className="rounded-xl border border-gray-200 bg-white overflow-hidden"
+                  className="rounded-xl border border-gray-200 bg-white flex items-center justify-between px-5 py-4"
                 >
-                  <button
-                    disabled={!supported}
-                    onClick={() => (isActive ? setActive(null) : selectPlatform(p.id))}
-                    className="w-full flex items-center justify-between px-5 py-4 text-left disabled:cursor-not-allowed"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="font-semibold text-gray-900">{p.name}</span>
-                      {!supported && (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
-                          Coming soon
-                        </span>
-                      )}
-                    </div>
-                    {supported ? (
-                      <ChevronRight
-                        size={18}
-                        className={`text-gray-400 transition-transform ${
-                          isActive ? "rotate-90" : ""
-                        }`}
-                      />
-                    ) : (
-                      <Lock size={16} className="text-gray-300" />
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-gray-900">{p.name}</span>
+                    {isConnected && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                        Connected
+                      </span>
                     )}
-                  </button>
+                    {!supported && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                        Coming soon
+                      </span>
+                    )}
+                  </div>
 
-                  {isActive && supported && (
-                    <form
-                      onSubmit={handleSync}
-                      className="px-5 pb-5 pt-1 space-y-4 border-t border-gray-100"
-                    >
-                      {(CREDENTIAL_FIELDS[p.id] ?? []).map((field) => (
-                        <div key={field.key}>
-                          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                            {field.label}
-                          </label>
-                          <input
-                            type={field.type}
-                            value={credentials[field.key] ?? ""}
-                            placeholder={field.placeholder}
-                            onChange={(e) =>
-                              setCredentials((prev) => ({
-                                ...prev,
-                                [field.key]: e.target.value,
-                              }))
-                            }
-                            className="input"
-                            required
-                          />
-                        </div>
-                      ))}
+                  <div className="flex items-center gap-2">
+                    {supported && isConnected && (
+                      <>
+                        <button
+                          onClick={() => handleConnect(p.id)}
+                          disabled={step !== "idle" && step !== "done"}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors disabled:opacity-40"
+                        >
+                          <ChevronRight size={12} />
+                          Re-sync
+                        </button>
+                        <button
+                          onClick={() => handleDisconnect(p.id)}
+                          title="Disconnect"
+                          className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          <LogOut size={14} />
+                        </button>
+                      </>
+                    )}
+                    {supported && !isConnected && (
                       <button
-                        type="submit"
-                        disabled={syncing}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-scaffold-500 text-white text-sm font-medium rounded-lg hover:bg-scaffold-600 transition-colors disabled:opacity-60"
+                        onClick={() => handleConnect(p.id)}
+                        disabled={step !== "idle" && step !== "done"}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-40"
                       >
-                        {syncing && <Loader2 size={16} className="animate-spin" />}
-                        {syncing ? "Starting sync…" : `Sync from ${p.name}`}
+                        {isOpening ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <ChevronRight size={14} />
+                        )}
+                        {isOpening ? "Opening…" : "Connect"}
                       </button>
-                    </form>
-                  )}
+                    )}
+                    {!supported && <Lock size={16} className="text-gray-300" />}
+                  </div>
                 </div>
               );
             })}

@@ -80,6 +80,32 @@ async def get_cached_progress(assignment_id: str) -> Optional[dict]:
     return json.loads(raw) if raw else None
 
 
+# ── Browserbase context persistence (keyed by user + platform) ───────────────
+
+async def save_bb_context(user_id: str, platform: str, context_id: str, ttl: int = 30 * 86400):
+    """Persist a Browserbase context ID so future syncs reuse the authenticated session."""
+    r = await get_redis()
+    await r.setex(f"bb_context:{user_id}:{platform}", ttl, context_id)
+
+
+async def get_bb_context(user_id: str, platform: str) -> Optional[str]:
+    r = await get_redis()
+    return await r.get(f"bb_context:{user_id}:{platform}")
+
+
+async def delete_bb_context(user_id: str, platform: str):
+    r = await get_redis()
+    await r.delete(f"bb_context:{user_id}:{platform}")
+
+
+async def get_connected_platforms(user_id: str) -> list[str]:
+    """Return list of platform names the user has a saved context for."""
+    r = await get_redis()
+    keys = await r.keys(f"bb_context:{user_id}:*")
+    prefix = f"bb_context:{user_id}:"
+    return [k[len(prefix):] for k in keys]
+
+
 # ── Progress history (ring buffer, last 100 entries) ─────────────────────────
 
 async def track_progress_history(assignment_id: str, completion: float):

@@ -52,11 +52,43 @@ export const api = {
   },
 
   discovery: {
-    sync: (platform: string, credentials: Record<string, string>) =>
-      request<{ status: string; message: string }>("/discovery/sync", {
+    connect: (platform: string, userId: string) =>
+      request<{
+        session_id: string;
+        live_view_url: string;
+        context_id: string;
+        platform: string;
+      }>("/discovery/connect", {
         method: "POST",
-        body: JSON.stringify({ platform, credentials }),
+        body: JSON.stringify({ platform, user_id: userId }),
       }),
+
+    scrape: (
+      platform: string,
+      sessionId: string,
+      contextId: string,
+      userId: string
+    ) =>
+      request<{ status: string; message: string }>("/discovery/scrape", {
+        method: "POST",
+        body: JSON.stringify({
+          platform,
+          session_id: sessionId,
+          context_id: contextId,
+          user_id: userId,
+        }),
+      }),
+
+    status: (userId: string) =>
+      request<{ user_id: string; connected_platforms: string[] }>(
+        `/discovery/status/${userId}`
+      ),
+
+    disconnect: (userId: string, platform: string) =>
+      request<{ status: string; platform: string }>(
+        `/discovery/disconnect/${userId}/${platform}`,
+        { method: "DELETE" }
+      ),
 
     supported: () =>
       request<{ platforms: { id: string; name: string; status: string }[] }>(

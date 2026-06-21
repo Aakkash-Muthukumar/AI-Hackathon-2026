@@ -65,3 +65,22 @@ class ProgressUpdateRequest(BaseModel):
 class DiscoveryRequest(BaseModel):
     platform: AssignmentSource
     credentials: dict
+
+
+class ConnectRequest(BaseModel):
+    platform: AssignmentSource
+    user_id: str
+
+
+class ConnectResponse(BaseModel):
+    session_id: str
+    live_view_url: str
+    context_id: str
+    platform: AssignmentSource
+
+
+class ScrapeRequest(BaseModel):
+    session_id: str
+    context_id: str
+    platform: AssignmentSource
+    user_id: str
