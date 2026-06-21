@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
-import { BookOpen, ExternalLink, RefreshCw, Link2 } from "lucide-react"
+import { ExternalLink, RefreshCw, Link2 } from "lucide-react"
 import { PROGRESS_GRADIENT, PROGRESS_BLUE } from "./lib/reqColors"
+import { ScaffoldLogo, BRAND } from "./components/ScaffoldLogo"
+import { ScaffoldLoader } from "./components/ScaffoldLoader"
 
 const DASHBOARD_URL = process.env.PLASMO_PUBLIC_DASHBOARD_URL ?? "http://localhost:3000"
 
@@ -57,7 +59,6 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState("")
 
-  // Load stable user ID from extension storage so links carry it to the web app
   useEffect(() => {
     chrome.storage.local.get("scaffold_user_id", ({ scaffold_user_id }) => {
       setUserId(scaffold_user_id ?? "")
@@ -74,25 +75,20 @@ function App() {
 
   useEffect(() => { load() }, [])
 
-  // Append ?uid= so the web app adopts the extension's user ID on first visit
   const uidParam = userId ? `?uid=${encodeURIComponent(userId)}` : ""
   const dashboardUrl = `${DASHBOARD_URL}${uidParam}`
   const connectUrl = `${DASHBOARD_URL}/connect${uidParam}`
 
   return (
     <div style={{ width: 320, fontFamily: "-apple-system, sans-serif", fontSize: 13 }}>
-      {/* Header */}
       <div style={{
         padding: "12px 16px",
-        background: "#4f6ef7",
+        background: BRAND[500],
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#fff", fontWeight: 700 }}>
-          <BookOpen size={18} />
-          Scaffold
-        </div>
+        <ScaffoldLogo variant="full" height={22} color="#ffffff" />
         <button
           onClick={load}
           style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}
@@ -102,10 +98,11 @@ function App() {
         </button>
       </div>
 
-      {/* Assignment list */}
       <div style={{ padding: "12px 16px" }}>
         {loading ? (
-          <p style={{ color: "#9ca3af", textAlign: "center", padding: "20px 0" }}>Loading…</p>
+          <div style={{ padding: "24px 0", display: "flex", justifyContent: "center" }}>
+            <ScaffoldLoader width={52} label="Loading…" />
+          </div>
         ) : assignments.length === 0 ? (
           <p style={{ color: "#9ca3af", textAlign: "center", padding: "20px 0", fontSize: 12, lineHeight: 1.6 }}>
             No assignments yet.<br />
@@ -154,7 +151,6 @@ function App() {
         )}
       </div>
 
-      {/* Footer */}
       <div style={{ padding: "10px 16px", borderTop: "1px solid #e5e7eb", display: "flex", flexDirection: "column", gap: 8 }}>
         <a
           href={connectUrl}
@@ -166,7 +162,7 @@ function App() {
             gap: 6,
             padding: "7px 12px",
             borderRadius: 8,
-            background: "#4f6ef7",
+            background: BRAND[500],
             color: "#fff",
             fontSize: 12,
             textDecoration: "none",

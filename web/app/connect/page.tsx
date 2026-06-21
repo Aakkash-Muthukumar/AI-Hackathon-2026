@@ -5,9 +5,9 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { getUserId } from "@/lib/userId";
 import { Header } from "@/components/Header";
+import { ScaffoldLoader } from "@/components/ScaffoldLoader";
 import {
   ArrowLeft,
-  Loader2,
   CheckCircle2,
   Lock,
   ChevronRight,
@@ -184,7 +184,7 @@ export default function Connect() {
             {newAssignmentCount !== null ? (
               <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
             ) : (
-              <Loader2 size={16} className="shrink-0 mt-0.5 animate-spin" />
+              <ScaffoldLoader width={22} className="!gap-0 shrink-0" />
             )}
             <span>
               {doneMessage}{" "}
@@ -202,13 +202,13 @@ export default function Connect() {
 
         {/* Live view panel */}
         {step === "live" && session && (
-          <div className="mb-8 rounded-xl border border-indigo-200 bg-white overflow-hidden shadow-sm">
-            <div className="flex items-center justify-between px-5 py-3 bg-indigo-50 border-b border-indigo-100">
-              <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700">
+          <div className="mb-8 rounded-xl border border-scaffold-100 bg-white overflow-hidden shadow-sm">
+            <div className="flex items-center justify-between px-5 py-3 bg-scaffold-50 border-b border-scaffold-100">
+              <div className="flex items-center gap-2 text-sm font-semibold text-scaffold-700">
                 <MonitorSmartphone size={16} />
                 Live browser — {session.platform}
               </div>
-              <span className="text-xs text-indigo-500">
+              <span className="text-xs text-scaffold-500">
                 Log in, then click &quot;Scan my tasks&quot; below
               </span>
             </div>
@@ -221,7 +221,7 @@ export default function Connect() {
             <div className="flex items-center gap-3 px-5 py-4 border-t border-gray-100 bg-gray-50">
               <button
                 onClick={handleScrape}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-scaffold-500 text-white text-sm font-medium rounded-lg hover:bg-scaffold-600 transition-colors"
               >
                 <CheckCircle2 size={16} />
                 I&apos;m logged in — scan my tasks
@@ -237,18 +237,14 @@ export default function Connect() {
         )}
 
         {step === "scraping" && (
-          <div className="mb-8 flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-5 py-4 text-sm text-indigo-700">
-            <Loader2 size={16} className="animate-spin shrink-0" />
-            Extracting assignments in the background…
+          <div className="mb-8 flex justify-center rounded-xl border border-scaffold-100 bg-scaffold-50 px-5 py-8">
+            <ScaffoldLoader width={64} label="Extracting assignments…" />
           </div>
         )}
 
-        {/* Platform list */}
         {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 rounded-xl bg-gray-200 animate-pulse" />
-            ))}
+          <div className="flex justify-center py-16">
+            <ScaffoldLoader width={64} label="Loading platforms…" />
           </div>
         ) : (
           <div className="space-y-3">
@@ -282,7 +278,7 @@ export default function Connect() {
                         <button
                           onClick={() => handleConnect(p.id)}
                           disabled={step !== "idle" && step !== "done"}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors disabled:opacity-40"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-scaffold-600 border border-scaffold-200 rounded-lg hover:bg-scaffold-50 transition-colors disabled:opacity-40"
                         >
                           <ChevronRight size={12} />
                           Re-sync
@@ -300,10 +296,10 @@ export default function Connect() {
                       <button
                         onClick={() => handleConnect(p.id)}
                         disabled={step !== "idle" && step !== "done"}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-40"
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-scaffold-500 text-white text-sm font-medium rounded-lg hover:bg-scaffold-600 transition-colors disabled:opacity-40"
                       >
                         {isOpening ? (
-                          <Loader2 size={14} className="animate-spin" />
+                          <ScaffoldLoader width={16} className="!gap-0" />
                         ) : (
                           <ChevronRight size={14} />
                         )}

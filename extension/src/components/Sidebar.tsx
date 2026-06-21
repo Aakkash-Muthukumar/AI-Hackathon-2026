@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { TaskProgress } from "./TaskProgress"
 import { PROGRESS_GRADIENT } from "../lib/reqColors"
-import { BookOpen, RefreshCw, ChevronRight, ChevronLeft } from "lucide-react"
+import { ScaffoldLogo, BRAND } from "./ScaffoldLogo"
+import { ScaffoldLoader } from "./ScaffoldLoader"
+import { RefreshCw, ChevronRight, ChevronLeft } from "lucide-react"
 
 export interface Task {
   id: string
@@ -106,13 +108,13 @@ export function Sidebar({ getDocumentContent }: Props) {
         onClick={() => setCollapsed(false)}
         style={{
           position: "fixed", right: 0, top: "50%", transform: "translateY(-50%)",
-          background: "#4f6ef7", color: "#fff", borderRadius: "8px 0 0 8px",
+          background: BRAND[500], color: "#fff", borderRadius: "8px 0 0 8px",
           padding: "10px 6px", border: "none", cursor: "pointer", zIndex: 999999,
           display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
           boxShadow: "-2px 0 8px rgba(0,0,0,0.15)",
         }}
       >
-        <BookOpen size={16} />
+        <ScaffoldLogo variant="mark" height={18} color="#ffffff" />
         <ChevronLeft size={12} />
       </button>
     )
@@ -133,12 +135,9 @@ export function Sidebar({ getDocumentContent }: Props) {
       <div style={{
         padding: "12px 14px", borderBottom: "1px solid #e5e7eb",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: "#4f6ef7",
+        background: BRAND[500],
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#fff", fontWeight: 600 }}>
-          <BookOpen size={16} />
-          Scaffold
-        </div>
+        <ScaffoldLogo variant="full" height={20} color="#ffffff" />
         <div style={{ display: "flex", gap: 6 }}>
           <button
             onClick={loadAssignments}
@@ -146,7 +145,7 @@ export function Sidebar({ getDocumentContent }: Props) {
             title="Reload assignments"
             style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
           >
-            <RefreshCw size={14} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
+            <RefreshCw size={14} />
           </button>
           <button
             onClick={() => setCollapsed(true)}
@@ -179,13 +178,17 @@ export function Sidebar({ getDocumentContent }: Props) {
       {/* Body */}
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
         {!selected ? (
+          loading ? (
+            <div style={{ marginTop: 40, display: "flex", justifyContent: "center" }}>
+              <ScaffoldLoader width={48} label="Loading assignments…" />
+            </div>
+          ) : (
           <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-            {loading
-              ? "Loading assignments…"
-              : error
+            {error
               ? error
               : <>No assignments yet.<br />Add one in the dashboard, then click refresh.</>}
           </p>
+          )
         ) : (
           <>
             {/* Overall */}

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Assignment } from "@/lib/types";
 import { api } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { ScaffoldLoader } from "@/components/ScaffoldLoader";
 import { TaskList } from "@/components/TaskList";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ExternalLink, ChevronDown, ChevronUp, Clock } from "lucide-react";
@@ -56,8 +57,8 @@ export default function AssignmentDetail() {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
-        <div className="max-w-6xl mx-auto px-6 py-12">
-          <div className="h-96 rounded-xl bg-gray-200 animate-pulse" />
+        <div className="flex justify-center py-32">
+          <ScaffoldLoader width={72} label="Loading assignment…" />
         </div>
       </div>
     );
@@ -148,9 +149,7 @@ export default function AssignmentDetail() {
                 Paste or type your draft
               </p>
               {evalLoading && (
-                <span className="text-xs text-scaffold-500 animate-pulse">
-                  Evaluating progress…
-                </span>
+                <ScaffoldLoader width={28} label="Evaluating…" className="!flex-row !gap-2" />
               )}
             </div>
             <textarea

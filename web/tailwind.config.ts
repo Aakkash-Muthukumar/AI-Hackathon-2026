@@ -10,12 +10,12 @@ const config: Config = {
     extend: {
       colors: {
         scaffold: {
-          50: "#f0f4ff",
-          100: "#dce7ff",
-          500: "#4f6ef7",
-          600: "#3b55e6",
-          700: "#2d43c9",
-          900: "#1a2780",
+          50: "#eff6ff",
+          100: "#dbeafe",
+          500: "#2563eb",
+          600: "#1d4ed8",
+          700: "#1e40af",
+          900: "#1e3a8a",
         },
       },
     },

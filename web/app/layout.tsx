@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Scaffold — Complete Your Writing",
   description:
     "AI-powered assignment completion system that tracks your actual writing progress",
+  icons: { icon: "/favicon.svg" },
 };
 
 export default function RootLayout({

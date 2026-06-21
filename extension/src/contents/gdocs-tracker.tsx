@@ -15,8 +15,10 @@ import type { PlasmoCSConfig } from "plasmo"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { createRoot } from "react-dom/client"
 import { RequirementBars } from "../components/RequirementBars"
+import { ScaffoldLogo, BRAND } from "../components/ScaffoldLogo"
+import { ScaffoldLoader } from "../components/ScaffoldLoader"
 import { reqColorAt } from "../lib/reqColors"
-import { BookOpen, RefreshCw, ChevronLeft, ChevronRight, Link2, LogOut } from "lucide-react"
+import { RefreshCw, ChevronLeft, ChevronRight, Link2, LogOut } from "lucide-react"
 
 export const config: PlasmoCSConfig = {
   matches: ["https://docs.google.com/document/*"],
@@ -137,6 +139,117 @@ interface EvalResult {
   overall: number
   assignment_id: string
   unavailable_reason?: string
+}
+
+type BarEntry = [string, { name?: string; score: number; missing: string[] }]
+
+function CollapsedBottomBar({
+  entries,
+  overall,
+  totalScore,
+  onExpand,
+}: {
+  entries: BarEntry[]
+  overall: number
+  totalScore: number
+  onExpand: () => void
+}) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const expanded = hoveredIdx !== null
+
+  return (
+    <div
+      onClick={onExpand}
+      title={`Overall: ${overall.toFixed(0)}% — click to expand`}
+      style={{
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: expanded ? 44 : 12,
+        background: "transparent",
+        cursor: "pointer",
+        zIndex: 999999,
+        overflow: "visible",
+        transition: "height 0.2s ease",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 12,
+          background: "#e5e7eb",
+          display: "flex",
+          alignItems: "flex-end",
+          overflow: "visible",
+        }}
+      >
+        {entries.length === 0 || overall <= 0 ? (
+          <div style={{ width: `${Math.min(100, overall)}%`, height: "100%", background: "#93c5fd" }} />
+        ) : (
+          <div
+            style={{
+              width: `${Math.min(100, Math.max(0, overall))}%`,
+              height: "100%",
+              display: "flex",
+              alignItems: "flex-end",
+              transition: "width 0.5s ease",
+            }}
+          >
+            {entries.map(([id, req], i) => {
+              const share = totalScore > 0 ? (Math.max(0, req.score) / totalScore) * 100 : 100 / entries.length
+              const label = req.name ?? id
+              const isHovered = hoveredIdx === i
+              return (
+                <div
+                  key={id}
+                  onMouseEnter={(e) => { e.stopPropagation(); setHoveredIdx(i) }}
+                  onMouseLeave={() => setHoveredIdx(null)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: isHovered ? `calc(${share}% + 16px)` : `${share}%`,
+                    height: isHovered ? 22 : 12,
+                    background: reqColorAt(i),
+                    transition: "width 0.18s ease, height 0.18s ease",
+                    position: "relative",
+                    flexShrink: 0,
+                    borderRadius: isHovered ? "4px 4px 0 0" : 0,
+                  }}
+                >
+                  {isHovered && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: "100%",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        marginBottom: 6,
+                        padding: "5px 10px",
+                        background: "#1e293b",
+                        color: "#fff",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        borderRadius: 6,
+                        whiteSpace: "nowrap",
+                        pointerEvents: "none",
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.18)",
+                        zIndex: 1,
+                      }}
+                    >
+                      {label} · {req.score.toFixed(0)}%
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ── React component ───────────────────────────────────────────────────────────
@@ -366,7 +479,7 @@ function GDocsTrackerSidebar() {
             right: 0,
             top: "50%",
             transform: "translateY(-50%)",
-            background: "#4f6ef7",
+            background: BRAND[500],
             color: "#fff",
             borderRadius: "8px 0 0 8px",
             padding: "10px 6px",
@@ -380,56 +493,16 @@ function GDocsTrackerSidebar() {
             boxShadow: "-2px 0 8px rgba(0,0,0,0.15)",
           }}
         >
-          <BookOpen size={16} />
+          <ScaffoldLogo variant="mark" height={18} color="#ffffff" />
           <ChevronLeft size={12} />
         </button>
 
-        {/* Single stacked progress bar (Apple storage style) */}
-        <div
-          onClick={() => setCollapsed(false)}
-          title={`Overall: ${overall.toFixed(0)}% — click to expand`}
-          style={{
-            position: "fixed",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 12,
-            background: "#e5e7eb",
-            cursor: "pointer",
-            zIndex: 999999,
-            overflow: "hidden",
-          }}
-        >
-          {entries.length === 0 || overall <= 0 ? (
-            <div style={{ width: `${Math.min(100, overall)}%`, height: "100%", background: "#93c5fd" }} />
-          ) : (
-            <div
-              style={{
-                width: `${Math.min(100, Math.max(0, overall))}%`,
-                height: "100%",
-                display: "flex",
-                transition: "width 0.5s ease",
-              }}
-            >
-              {entries.map(([id, req], i) => {
-                const share = totalScore > 0 ? (Math.max(0, req.score) / totalScore) * 100 : 100 / entries.length
-                const label = req.name ?? id
-                return (
-                  <div
-                    key={id}
-                    title={`${label}: ${req.score.toFixed(0)}%`}
-                    style={{
-                      width: `${share}%`,
-                      height: "100%",
-                      background: reqColorAt(i),
-                      transition: "width 0.5s ease",
-                    }}
-                  />
-                )
-              })}
-            </div>
-          )}
-        </div>
+        <CollapsedBottomBar
+          entries={entries}
+          overall={overall}
+          totalScore={totalScore}
+          onExpand={() => setCollapsed(false)}
+        />
       </>
     )
   }
@@ -451,12 +524,9 @@ function GDocsTrackerSidebar() {
       <div style={{
         padding: "12px 14px", borderBottom: "1px solid #e5e7eb",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: "#4f6ef7",
+        background: BRAND[500],
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#fff", fontWeight: 600 }}>
-          <BookOpen size={16} />
-          Scaffold
-        </div>
+        <ScaffoldLogo variant="full" height={20} color="#ffffff" />
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <button
             onClick={handleRefresh}
@@ -464,7 +534,11 @@ function GDocsTrackerSidebar() {
             title="Refresh assignments & evaluate"
             style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
           >
-            <RefreshCw size={14} style={{ animation: evaluating ? "spin 1s linear infinite" : "none" }} />
+            {evaluating ? (
+              <ScaffoldLoader width={16} theme="dark" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
           </button>
           <button
             onClick={() => setCollapsed(true)}
@@ -497,9 +571,9 @@ function GDocsTrackerSidebar() {
       {/* Body */}
       <div style={{ flex: 1, overflowY: "auto", padding: "14px" }}>
         {authorized === null && (
-          <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-            Checking…
-          </p>
+          <div style={{ marginTop: 40, display: "flex", justifyContent: "center" }}>
+            <ScaffoldLoader width={48} label="Checking…" />
+          </div>
         )}
 
         {authorized === false && (
@@ -513,7 +587,7 @@ function GDocsTrackerSidebar() {
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6,
                 padding: "9px 16px", borderRadius: 8, border: "none",
-                background: "#4f6ef7", color: "#fff", fontSize: 13, fontWeight: 600,
+                background: BRAND[500], color: "#fff", fontSize: 13, fontWeight: 600,
                 cursor: authPolling ? "wait" : "pointer",
               }}
             >
@@ -540,7 +614,7 @@ function GDocsTrackerSidebar() {
               href="http://localhost:3000"
               target="_blank"
               rel="noreferrer"
-              style={{ color: "#4f6ef7" }}
+              style={{ color: BRAND[500] }}
             >
               Open the dashboard
             </a>{" "}
@@ -551,9 +625,9 @@ function GDocsTrackerSidebar() {
         {authorized && selectedId && (
           <>
             {evaluating && !scores && (
-              <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-                Evaluating…
-              </p>
+              <div style={{ marginTop: 40, display: "flex", justifyContent: "center" }}>
+                <ScaffoldLoader width={52} label="Evaluating…" />
+              </div>
             )}
             {error && (
               <p style={{ color: "#ef4444", fontSize: 11, marginBottom: 10 }}>{error}</p>

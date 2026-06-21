@@ -6,7 +6,8 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { AssignmentSource, RubricItem, SOURCE_LABELS } from "@/lib/types";
 import { Header } from "@/components/Header";
-import { ArrowLeft, Plus, Trash2, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ScaffoldLoader } from "@/components/ScaffoldLoader";
 
 const SELECTABLE_SOURCES: AssignmentSource[] = [
   "manual",
@@ -231,7 +232,7 @@ export default function NewAssignment() {
               disabled={submitting}
               className="inline-flex items-center gap-2 px-5 py-2.5 bg-scaffold-500 text-white text-sm font-medium rounded-lg hover:bg-scaffold-600 transition-colors disabled:opacity-60"
             >
-              {submitting && <Loader2 size={16} className="animate-spin" />}
+              {submitting && <ScaffoldLoader width={20} className="!gap-0" />}
               {submitting ? "Analyzing rubric…" : "Create assignment"}
             </button>
             <Link

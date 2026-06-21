@@ -12,4 +12,28 @@
   .input {
     @apply w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-scaffold-500 focus:border-transparent;
   }
+
+  /* Scaffold loading indicator */
+  .scaffold-fill {
+    transform-box: fill-box;
+    transform-origin: left center;
+    animation: scaffoldSweep 2s ease-in-out infinite;
+  }
+  .scaffold-fill.f4 { animation-delay: 0s; }
+  .scaffold-fill.f3 { animation-delay: 0.18s; }
+  .scaffold-fill.f2 { animation-delay: 0.36s; }
+  .scaffold-fill.f1 { animation-delay: 0.54s; }
+  @keyframes scaffoldSweep {
+    0% { transform: scaleX(0); }
+    35% { transform: scaleX(1); }
+    70% { transform: scaleX(1); }
+    100% { transform: scaleX(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scaffold-fill { animation: scaffoldPulse 1.6s ease-in-out infinite; }
+    @keyframes scaffoldPulse {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 1; }
+    }
+  }
 }

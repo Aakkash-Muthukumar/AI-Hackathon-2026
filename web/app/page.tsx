@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { AssignmentCard } from "@/components/AssignmentCard";
 import { FilterBar } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
+import { ScaffoldLoader } from "@/components/ScaffoldLoader";
 import { PlusCircle, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
@@ -102,13 +103,8 @@ export default function Dashboard() {
 
         {/* Grid */}
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-48 rounded-xl bg-gray-200 animate-pulse"
-              />
-            ))}
+          <div className="flex justify-center py-24">
+            <ScaffoldLoader width={72} label="Loading assignments…" />
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
