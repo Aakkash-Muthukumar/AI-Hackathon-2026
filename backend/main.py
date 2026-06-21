@@ -11,12 +11,14 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from services import arize_service
 from routers import assignments, discovery
 
-sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN"),
-    integrations=[StarletteIntegration(), FastApiIntegration()],
-    traces_sample_rate=1.0,
-    environment=os.getenv("ENVIRONMENT", "development"),
-)
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _sentry_dsn and "..." not in _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        integrations=[StarletteIntegration(), FastApiIntegration()],
+        traces_sample_rate=1.0,
+        environment=os.getenv("ENVIRONMENT", "development"),
+    )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

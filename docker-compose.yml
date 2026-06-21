@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     build: ./backend
@@ -8,6 +6,7 @@ services:
     env_file: ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
     depends_on:
       - redis
       - phoenix

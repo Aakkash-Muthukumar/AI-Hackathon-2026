@@ -3,6 +3,7 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  output: "standalone",
 };
 
 export default withSentryConfig(nextConfig, {
