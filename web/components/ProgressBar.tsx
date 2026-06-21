@@ -6,16 +6,11 @@ interface Props {
   showLabel?: boolean;
 }
 
+// Matches the extension's progress gradient (light blue → dark blue).
+const PROGRESS_GRADIENT = "linear-gradient(90deg, #93c5fd 0%, #1e40af 100%)";
+
 export function ProgressBar({ value, size = "md", showLabel = true }: Props) {
   const pct = Math.min(100, Math.max(0, value));
-  const color =
-    pct === 100
-      ? "bg-green-500"
-      : pct >= 60
-      ? "bg-scaffold-500"
-      : pct >= 30
-      ? "bg-yellow-400"
-      : "bg-red-400";
 
   return (
     <div className="flex items-center gap-2">
@@ -26,8 +21,8 @@ export function ProgressBar({ value, size = "md", showLabel = true }: Props) {
         )}
       >
         <div
-          className={clsx("h-full rounded-full transition-all duration-500", color)}
-          style={{ width: `${pct}%` }}
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: PROGRESS_GRADIENT }}
         />
       </div>
       {showLabel && (
