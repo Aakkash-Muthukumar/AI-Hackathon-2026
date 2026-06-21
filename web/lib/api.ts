@@ -1,5 +1,6 @@
 import { Assignment } from "./types";
 import { getUserId } from "./userId";
+import { captureApiError } from "./sentry";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 const BACKEND_ROOT = BASE.replace(/\/api\/?$/, "");
@@ -16,6 +17,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText);
+    captureApiError(path, res.status, err);
     throw new Error(`API ${path} → ${res.status}: ${err}`);
   }
   if (res.status === 204) {

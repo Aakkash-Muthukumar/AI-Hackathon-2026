@@ -8,7 +8,7 @@ from models.schemas import (
     Assignment,
     AssignmentSource,
 )
-from services import browserbase_service, supabase_service, redis_service, assignment_service
+from services import browserbase_service, supabase_service, redis_service, assignment_service, sentry_service
 from services.assignment_sync import serialize_assignment
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,19 @@ async def connect(body: ConnectRequest):
         )
     except Exception as exc:
         logger.error("create_connect_session failed for platform=%s: %s", body.platform, exc, exc_info=True)
+        sentry_service.capture_pipeline_error(
+            exc,
+            pipeline="discovery_connect",
+            platform=body.platform.value,
+            user_id=body.user_id,
+        )
         raise HTTPException(502, f"Could not open Browserbase session: {exc}") from exc
+
+    sentry_service.add_breadcrumb(
+        "discovery",
+        f"Connected to {body.platform.value}",
+        data={"user_id": body.user_id, "reused_context": bool(existing_ctx)},
+    )
 
     # Persist context so future syncs skip the login step
     await redis_service.save_bb_context(body.user_id, body.platform, result["context_id"])
@@ -123,6 +135,13 @@ async def scrape(body: ScrapeRequest):
         logger.error(
             "Scrape failed for user %s platform %s: %s",
             body.user_id, body.platform, exc, exc_info=True,
+        )
+        sentry_service.capture_pipeline_error(
+            exc,
+            pipeline="discovery_scrape",
+            platform=body.platform.value,
+            user_id=body.user_id,
+            session_id=body.session_id,
         )
         raise HTTPException(502, f"Scan failed: {exc}") from exc
 

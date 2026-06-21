@@ -5,7 +5,18 @@ if (_sentryDsn && !_sentryDsn.includes("...")) {
   Sentry.init({
     dsn: _sentryDsn,
     environment: process.env.NODE_ENV,
+    tracesSampleRate: 1.0,
   })
+}
+
+function syncSentryUser(userId: string) {
+  if (!_sentryDsn || _sentryDsn.includes("...")) return
+  Sentry.setUser({ id: userId })
+}
+
+function trackExtensionAction(action: string, data?: Record<string, string>) {
+  if (!_sentryDsn || _sentryDsn.includes("...")) return
+  Sentry.addBreadcrumb({ category: "extension", message: action, level: "info", data })
 }
 
 const API = process.env.PLASMO_PUBLIC_API_URL ?? "http://localhost:8000/api"
@@ -26,9 +37,13 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 async function getUserId(): Promise<string> {
   const stored = await chrome.storage.local.get(USER_ID_KEY)
-  if (stored[USER_ID_KEY]) return stored[USER_ID_KEY] as string
+  if (stored[USER_ID_KEY]) {
+    syncSentryUser(stored[USER_ID_KEY] as string)
+    return stored[USER_ID_KEY] as string
+  }
   const id = crypto.randomUUID()
   await chrome.storage.local.set({ [USER_ID_KEY]: id })
+  syncSentryUser(id)
   return id
 }
 
@@ -132,8 +147,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // ── Google Docs live evaluation ─────────────────────────────────────────────
 
   if (msg.type === "EVALUATE_DOC") {
-    getUserId().then((userId) =>
-      fetch(`${API}/evaluate/`, {
+    getUserId().then((userId) => {
+      trackExtensionAction("evaluate_doc", {
+        assignment_id: msg.assignmentId,
+        doc_id: msg.docId,
+      })
+      return fetch(`${API}/evaluate/`, {
         method: "POST",
         headers: apiHeaders(userId),
         body: JSON.stringify({
@@ -152,7 +171,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         })
         .then((data) => sendResponse({ ok: true, data }))
         .catch((err) => { Sentry.captureException(err); sendResponse({ ok: false, error: String(err) }) })
-    )
+    })
     return true
   }
 

@@ -6,7 +6,7 @@ Sentry.init({
   tracesSampleRate: 1.0,
 
   integrations: [
-    // Replay 10% of sessions; 100% on error
+    Sentry.browserTracingIntegration(),
     Sentry.replayIntegration({
       maskAllText: false,
       blockAllMedia: false,

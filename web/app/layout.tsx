@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { SentryUserSync } from "@/components/SentryUserSync";
 
 export const metadata: Metadata = {
   title: "Scaffold — Complete Your Writing",
@@ -16,6 +17,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
+        <SentryUserSync />
         {children}
       </body>
     </html>

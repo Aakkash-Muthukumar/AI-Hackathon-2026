@@ -2,23 +2,13 @@ import os
 import logging
 from contextlib import asynccontextmanager
 
-import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from services import arize_service, rubric_vector_service
-from routers import assignments, discovery, google_auth, evaluate
+from services import arize_service, rubric_vector_service, sentry_service
+from routers import assignments, discovery, google_auth, evaluate, debug
 
-_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
-if _sentry_dsn and "..." not in _sentry_dsn:
-    sentry_sdk.init(
-        dsn=_sentry_dsn,
-        integrations=[StarletteIntegration(), FastApiIntegration()],
-        traces_sample_rate=1.0,
-        environment=os.getenv("ENVIRONMENT", "development"),
-    )
+sentry_service.init()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,9 +41,28 @@ app.add_middleware(
 app.include_router(assignments.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
 app.include_router(evaluate.router, prefix="/api")
+app.include_router(debug.router, prefix="/api")
 app.include_router(google_auth.router)   # /auth/google/* — no /api prefix (browser redirects)
+
+
+@app.middleware("http")
+async def sentry_user_context(request: Request, call_next):
+    """Attach X-User-ID to Sentry events for cross-client debugging."""
+    user_id = request.headers.get("X-User-ID")
+    if user_id:
+        sentry_service.set_user(user_id)
+    sentry_service.add_breadcrumb(
+        "http",
+        f"{request.method} {request.url.path}",
+        data={"has_user_id": bool(user_id)},
+    )
+    return await call_next(request)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "scaffold-api"}
+    return {
+        "status": "ok",
+        "service": "scaffold-api",
+        "sentry": sentry_service.is_enabled(),
+    }

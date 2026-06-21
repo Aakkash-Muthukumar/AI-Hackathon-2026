@@ -14,7 +14,10 @@ client = TestClient(app)
 def test_health():
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok", "service": "scaffold-api"}
+    body = res.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "scaffold-api"
+    assert "sentry" in body
 
 
 def test_supported_platforms():
@@ -48,3 +51,29 @@ def test_sync_starts_background_task(monkeypatch):
     body = res.json()
     assert body["status"] == "syncing"
     assert body["platform"] == "canvas"
+
+
+def test_sentry_test_requires_sentry():
+    res = client.post("/api/debug/sentry-test")
+    assert res.status_code == 503
+
+
+def test_sentry_test_ok_when_enabled(monkeypatch):
+    import services.sentry_service as ss
+
+    monkeypatch.setattr(ss, "is_enabled", lambda: True)
+    monkeypatch.setattr(ss, "set_user", lambda _uid: None)
+    monkeypatch.setattr(ss, "add_breadcrumb", lambda *a, **k: None)
+    monkeypatch.setattr(ss, "capture_exception", lambda *a, **k: None)
+
+    res = client.post(
+        "/api/debug/sentry-test",
+        headers={"X-User-ID": "judge-demo"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["user_id"] == "judge-demo"
+    assert "message" in body["sent"]
+    assert "error" in body["sent"]
+    assert "ai_span" in body["sent"]
