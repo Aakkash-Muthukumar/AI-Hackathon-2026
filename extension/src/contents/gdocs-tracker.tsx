@@ -401,7 +401,7 @@ function GDocsTrackerSidebar() {
           }}
         >
           {entries.length === 0 || overall <= 0 ? (
-            <div style={{ width: `${Math.min(100, overall)}%`, height: "100%", background: "#d1d5db" }} />
+            <div style={{ width: `${Math.min(100, overall)}%`, height: "100%", background: "#93c5fd" }} />
           ) : (
             <div
               style={{

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { TaskProgress } from "./TaskProgress"
+import { PROGRESS_GRADIENT } from "../lib/reqColors"
 import { BookOpen, RefreshCw, ChevronRight, ChevronLeft } from "lucide-react"
 
 export interface Task {
@@ -199,7 +200,7 @@ export function Sidebar({ getDocumentContent }: Props) {
               </div>
               <div style={{ height: 6, borderRadius: 99, background: "#e5e7eb", overflow: "hidden" }}>
                 <div style={{
-                  height: "100%", borderRadius: 99, background: "#4f6ef7",
+                  height: "100%", borderRadius: 99, background: PROGRESS_GRADIENT,
                   width: `${selected.overall_completion}%`, transition: "width 0.5s ease",
                 }} />
               </div>

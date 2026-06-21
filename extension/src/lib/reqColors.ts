@@ -1,9 +1,16 @@
-/** Stable per-requirement colors — same ID → same color in sidebar and bottom bar. */
+/** Stable per-requirement colors — same ID → same color in sidebar and bottom bar.
+ *  Light → dark blue ramp so every bar shares one cohesive blue scheme. */
 export const REQ_COLORS = [
-  "#4f6ef7", "#10b981", "#f59e0b", "#ef4444",
-  "#8b5cf6", "#06b6d4", "#f97316", "#ec4899",
-  "#14b8a6", "#84cc16",
+  "#bfdbfe", "#93c5fd", "#60a5fa", "#3b82f6",
+  "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a",
+  "#172554", "#0c1430",
 ]
+
+/** Fill for single-value progress bars — flows light blue → dark blue. */
+export const PROGRESS_GRADIENT = "linear-gradient(90deg, #93c5fd 0%, #1e40af 100%)"
+
+/** Solid dark blue for accompanying percentage text. */
+export const PROGRESS_BLUE = "#1e40af"
 
 export function reqColor(id: string): string {
   let h = 0

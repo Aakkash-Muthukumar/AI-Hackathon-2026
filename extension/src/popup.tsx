@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { BookOpen, ExternalLink, RefreshCw, Link2 } from "lucide-react"
+import { PROGRESS_GRADIENT, PROGRESS_BLUE } from "./lib/reqColors"
 
 const DASHBOARD_URL = process.env.PLASMO_PUBLIC_DASHBOARD_URL ?? "http://localhost:3000"
 
@@ -114,7 +115,6 @@ function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {assignments.map((a) => {
               const pct = Math.min(100, a.overall_completion)
-              const color = pct === 100 ? "#22c55e" : pct >= 60 ? "#4f6ef7" : pct >= 30 ? "#facc15" : "#f87171"
               return (
                 <div
                   key={a.id}
@@ -139,12 +139,12 @@ function App() {
                     >
                       {a.title}
                     </span>
-                    <span style={{ fontWeight: 700, color, fontSize: 12, flexShrink: 0 }}>
+                    <span style={{ fontWeight: 700, color: PROGRESS_BLUE, fontSize: 12, flexShrink: 0 }}>
                       {pct.toFixed(0)}%
                     </span>
                   </div>
                   <div style={{ height: 4, borderRadius: 99, background: "#e5e7eb", overflow: "hidden", marginBottom: 4 }}>
-                    <div style={{ height: "100%", borderRadius: 99, background: color, width: `${pct}%` }} />
+                    <div style={{ height: "100%", borderRadius: 99, background: PROGRESS_GRADIENT, width: `${pct}%` }} />
                   </div>
                   <SourceBadge source={a.source} />
                 </div>

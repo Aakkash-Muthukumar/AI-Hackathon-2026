@@ -1,5 +1,6 @@
 import type { Task } from "./Sidebar"
 import clsx from "clsx"
+import { PROGRESS_GRADIENT, PROGRESS_BLUE } from "../lib/reqColors"
 
 interface Props {
   tasks: Task[]
@@ -16,15 +17,13 @@ export function TaskProgress({ tasks }: Props) {
     <div className="space-y-2">
       {tasks.map((t) => {
         const pct = Math.min(100, Math.max(0, t.completion))
-        const color =
-          pct === 100 ? "#22c55e" : pct >= 60 ? "#4f6ef7" : pct >= 30 ? "#facc15" : "#f87171"
         return (
           <div key={t.id}>
             <div className="flex justify-between items-center mb-0.5">
               <span className="text-xs text-gray-700 truncate max-w-[140px]">{t.title}</span>
               <span
                 className="text-xs font-mono shrink-0 ml-1"
-                style={{ color }}
+                style={{ color: PROGRESS_BLUE }}
               >
                 {pct.toFixed(0)}%
               </span>
@@ -32,7 +31,7 @@ export function TaskProgress({ tasks }: Props) {
             <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${pct}%`, backgroundColor: color }}
+                style={{ width: `${pct}%`, background: PROGRESS_GRADIENT }}
               />
             </div>
           </div>
