@@ -4,8 +4,15 @@ from datetime import datetime
 from types import SimpleNamespace
 from services.claude_service import _strip_fences
 from services.redis_service import content_changed_enough
+from services.rubric_vector_service import (
+    cosine_similarity,
+    format_retrieval_context,
+    is_semantically_unchanged,
+    _task_text,
+    _rubric_text,
+)
 from services.browserbase_service import normalize_assignment, _get_live_view_url
-from models.schemas import AssignmentSource
+from models.schemas import AssignmentSource, Task, RubricItem
 
 
 class TestStripFences:
@@ -123,3 +130,45 @@ class TestGetLiveViewUrl:
         )
         url = asyncio.run(_get_live_view_url(bb, "sess-123"))
         assert url == "https://debug.example/session"
+
+
+class TestRubricVectorHelpers:
+    def test_cosine_identical_vectors(self):
+        v = [1.0, 0.0, 0.0]
+        assert cosine_similarity(v, v) == 1.0
+
+    def test_cosine_orthogonal_vectors(self):
+        assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
+
+    def test_semantic_unchanged_above_threshold(self):
+        v = [0.5, 0.5, 0.5, 0.5]
+        assert is_semantically_unchanged(v, v, threshold=0.97) is True
+
+    def test_semantic_unchanged_without_previous(self):
+        assert is_semantically_unchanged(None, [1.0, 0.0]) is False
+
+    def test_task_text_joins_fields(self):
+        task = Task(
+            id="t1",
+            title="Thesis",
+            success_criteria=["Clear claim"],
+            rubric_alignment=["Argument"],
+        )
+        text = _task_text(task)
+        assert "Thesis" in text
+        assert "Clear claim" in text
+        assert "Argument" in text
+
+    def test_rubric_text_includes_criterion(self):
+        item = RubricItem(criterion="Structure", description="Logical flow")
+        assert _rubric_text(item) == "Structure: Logical flow"
+
+    def test_format_retrieval_context_empty(self):
+        assert format_retrieval_context([]) == ""
+
+    def test_format_retrieval_context_includes_hits(self):
+        out = format_retrieval_context(
+            [{"item_id": "task_1", "item_type": "task", "text": "Thesis", "score": 0.91}]
+        )
+        assert "task_1" in out
+        assert "0.91" in out

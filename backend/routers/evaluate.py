@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from models.schemas import EvaluateRequest, EvaluateResponse, Assignment
-from services import redis_service, google_service, claude_service, supabase_service
+from services import redis_service, google_service, claude_service, supabase_service, rubric_vector_service
 from services.assignment_sync import apply_eval_to_assignment, serialize_assignment
 
 router = APIRouter(prefix="/evaluate", tags=["evaluate"])
@@ -168,9 +168,25 @@ async def evaluate(body: EvaluateRequest):
             logger.warning("Could not persist zero scores: %s", exc)
         return EvaluateResponse(**zero_result)
 
-    # 6. Score with Claude (prompt caching applied inside claude_service)
-    result = await claude_service.score_requirements(assignment, doc_text)
+    # 6. Vector-retrieve relevant rubric items, then score with Claude
+    retrieval_hits = await rubric_vector_service.retrieve_relevant(
+        body.assignment_id,
+        doc_text,
+        top_k=min(6, max(len(assignment.tasks), 1)),
+    )
+    if not retrieval_hits and assignment.tasks:
+        await rubric_vector_service.index_assignment(assignment, assignment.tasks)
+        retrieval_hits = await rubric_vector_service.retrieve_relevant(
+            body.assignment_id,
+            doc_text,
+            top_k=min(6, max(len(assignment.tasks), 1)),
+        )
+
+    result = await claude_service.score_requirements(
+        assignment, doc_text, retrieval_hits=retrieval_hits
+    )
     result["assignment_id"] = body.assignment_id
+    await rubric_vector_service.store_document_embedding(body.assignment_id, doc_text)
 
     # 7. Persist — Supabase for long-term, Redis for fast reads + dashboard task sync
     try:

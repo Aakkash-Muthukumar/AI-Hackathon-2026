@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from services import arize_service
+from services import arize_service, rubric_vector_service
 from routers import assignments, discovery, google_auth, evaluate
 
 _sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     arize_service.initialize()
+    await rubric_vector_service.ensure_index()
     logger.info("Scaffold backend ready")
     yield
 

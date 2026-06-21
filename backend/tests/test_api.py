@@ -26,7 +26,10 @@ def test_supported_platforms():
     assert by_id["canvas"]["status"] == "supported"
     assert by_id["notion"]["status"] == "supported"
     assert by_id["google_classroom"]["status"] == "supported"
-    assert by_id["jira"]["status"] == "coming_soon"
+    assert by_id["trello"]["status"] == "supported"
+    assert by_id["jira"]["status"] == "supported"
+    assert by_id["asana"]["status"] == "supported"
+    assert by_id["clickup"]["status"] == "supported"
 
 
 def test_sync_starts_background_task(monkeypatch):

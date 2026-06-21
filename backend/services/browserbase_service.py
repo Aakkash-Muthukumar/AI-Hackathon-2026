@@ -173,12 +173,20 @@ _START_URLS = {
         "https://accounts.google.com/signin"
         "?continue=https://classroom.google.com&flowName=GlifWebSignIn"
     ),
+    AssignmentSource.TRELLO: "https://trello.com/login",
+    AssignmentSource.JIRA: "https://id.atlassian.com/login",
+    AssignmentSource.ASANA: "https://app.asana.com/-/login",
+    AssignmentSource.CLICKUP: "https://app.clickup.com/login",
 }
 
 # Platforms where OAuth popups block iframe login — open live view in a new tab.
 OAUTH_HEAVY_PLATFORMS = frozenset({
     AssignmentSource.NOTION,
     AssignmentSource.GOOGLE_CLASSROOM,
+    AssignmentSource.TRELLO,
+    AssignmentSource.JIRA,
+    AssignmentSource.ASANA,
+    AssignmentSource.CLICKUP,
 })
 
 
@@ -389,10 +397,72 @@ async def _scrape_google_classroom(client, session_id: str) -> List[dict]:
     )
 
 
+_EXTRACT_INSTRUCTION = (
+    "Extract every assignment-like item visible: title, due date, description or "
+    "instructions, and any rubric or grading criteria"
+)
+
+
+async def _scrape_board_app(
+    client,
+    session_id: str,
+    home_url: str,
+    agent_instruction: str,
+) -> List[dict]:
+    await _sh_navigate(client, session_id, home_url)
+    await asyncio.sleep(2)
+    await _sh_execute(client, session_id, agent_instruction, max_steps=15)
+    return await _sh_extract(client, session_id, _EXTRACT_INSTRUCTION)
+
+
+async def _scrape_trello(client, session_id: str) -> List[dict]:
+    return await _scrape_board_app(
+        client,
+        session_id,
+        "https://trello.com/",
+        "Find boards with cards that represent assignments, homework, tasks, or deadlines. "
+        "Open the most relevant boards and lists.",
+    )
+
+
+async def _scrape_jira(client, session_id: str) -> List[dict]:
+    return await _scrape_board_app(
+        client,
+        session_id,
+        "https://home.atlassian.com/",
+        "Open Jira and find projects or boards with issues that look like assignments, "
+        "homework, or tasks with due dates. Show list or board views.",
+    )
+
+
+async def _scrape_asana(client, session_id: str) -> List[dict]:
+    return await _scrape_board_app(
+        client,
+        session_id,
+        "https://app.asana.com/",
+        "Find projects or lists with tasks that represent assignments, homework, or "
+        "coursework. Open the most relevant project views.",
+    )
+
+
+async def _scrape_clickup(client, session_id: str) -> List[dict]:
+    return await _scrape_board_app(
+        client,
+        session_id,
+        "https://app.clickup.com/",
+        "Find spaces, lists, or boards with tasks that represent assignments, homework, "
+        "or deadlines. Open the most relevant views.",
+    )
+
+
 _SCRAPERS = {
     AssignmentSource.CANVAS: _scrape_canvas,
     AssignmentSource.NOTION: _scrape_notion,
     AssignmentSource.GOOGLE_CLASSROOM: _scrape_google_classroom,
+    AssignmentSource.TRELLO: _scrape_trello,
+    AssignmentSource.JIRA: _scrape_jira,
+    AssignmentSource.ASANA: _scrape_asana,
+    AssignmentSource.CLICKUP: _scrape_clickup,
 }
 
 

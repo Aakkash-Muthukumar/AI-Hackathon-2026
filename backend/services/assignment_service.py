@@ -5,7 +5,7 @@ import logging
 from typing import List, Optional
 
 from models.schemas import Assignment, Task
-from services import claude_service, redis_service, arize_service, google_service
+from services import claude_service, redis_service, arize_service, google_service, rubric_vector_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +32,25 @@ async def analyze_rubric(assignment: Assignment) -> List[Task]:
     """Return tasks for an assignment, hitting Redis before calling Claude."""
     cached = await redis_service.get_cached_rubric_analysis(assignment.id)
     if cached:
-        return [Task(**t) for t in cached]
+        tasks = [Task(**t) for t in cached]
+    else:
+        tasks = await claude_service.analyze_assignment(assignment)
+        await redis_service.cache_rubric_analysis(
+            assignment.id, [t.model_dump() for t in tasks]
+        )
+        arize_service.record_rubric_extraction(
+            assignment_id=assignment.id,
+            rubric_item_count=len(assignment.rubric),
+            task_count=len(tasks),
+        )
 
-    tasks = await claude_service.analyze_assignment(assignment)
-
-    await redis_service.cache_rubric_analysis(
-        assignment.id, [t.model_dump() for t in tasks]
-    )
-
-    arize_service.record_rubric_extraction(
-        assignment_id=assignment.id,
-        rubric_item_count=len(assignment.rubric),
-        task_count=len(tasks),
-    )
+    try:
+        await rubric_vector_service.index_assignment(assignment, tasks)
+    except Exception as exc:
+        logger.warning(
+            "Rubric vector indexing failed for assignment %s: %s",
+            assignment.id,
+            exc,
+        )
 
     return tasks

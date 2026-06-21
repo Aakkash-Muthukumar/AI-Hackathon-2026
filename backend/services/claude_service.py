@@ -216,7 +216,11 @@ Return ONLY the JSON array — no markdown fences, no commentary."""
         return [Task(**_normalize_task(t, i)) for i, t in enumerate(tasks_data)]
 
 
-async def score_requirements(assignment: Assignment, document_text: str) -> dict:
+async def score_requirements(
+    assignment: Assignment,
+    document_text: str,
+    retrieval_hits: list | None = None,
+) -> dict:
     """
     Score how well the document covers each assignment requirement.
 
@@ -236,6 +240,11 @@ async def score_requirements(assignment: Assignment, document_text: str) -> dict
         for t in assignment.tasks
     )
 
+    retrieval_block = ""
+    if retrieval_hits:
+        from services.rubric_vector_service import format_retrieval_context
+        retrieval_block = format_retrieval_context(retrieval_hits) + "\n\n"
+
     cached_prefix = f"""You are a precise assignment requirement evaluator.
 Do NOT mention word counts, keystroke counts, or document length — only content quality.
 
@@ -250,7 +259,7 @@ Rubric:
 Tasks to score (use the exact id string as each JSON key):
 {task_lines}
 
-Return ONLY compact JSON with no prose, no markdown fences:
+{retrieval_block}Return ONLY compact JSON with no prose, no markdown fences:
 {{
   "requirements": {{
     "<exact task id from list above>": {{
@@ -316,10 +325,20 @@ Rules for "missing" entries:
                 raise
 
 
-async def evaluate_progress(content: str, tasks: List[Task], assignment: Assignment) -> List[Task]:
+async def evaluate_progress(
+    content: str,
+    tasks: List[Task],
+    assignment: Assignment,
+    retrieval_hits: list | None = None,
+) -> List[Task]:
     """Score each task 0-100 against the current document content."""
-    prompt = f"""Assignment: {assignment.title}
+    retrieval_block = ""
+    if retrieval_hits:
+        from services.rubric_vector_service import format_retrieval_context
+        retrieval_block = f"\n\n{format_retrieval_context(retrieval_hits)}\n"
 
+    prompt = f"""Assignment: {assignment.title}
+{retrieval_block}
 Tasks:
 {json.dumps([t.model_dump() for t in tasks], indent=2)}
 
@@ -328,7 +347,10 @@ Document content (first 8 000 chars):
 
 Return the same JSON array with updated:
 - completion: 0-100 (how well this task is addressed)
-- missing_requirements: list of what is still needed to satisfy this task"""
+- missing_requirements: list of what is still needed to satisfy this task
+
+When vector retrieval hits are provided, prioritize accurate scoring for those
+requirements but still return every task in the array."""
 
     with sentry_sdk.start_span(op="ai.pipeline", name="evaluate_progress"):
         response = _call_claude(_PROGRESS_SYSTEM, prompt, 2048, "progress_evaluation")

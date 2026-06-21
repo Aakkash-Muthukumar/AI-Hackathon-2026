@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from typing import Optional
 import logging
 from models.schemas import Assignment, AssignmentCreate, ProgressUpdateRequest, AssignmentStatus
-from services import supabase_service, redis_service, assignment_service, progress_service
+from services import supabase_service, redis_service, assignment_service, progress_service, rubric_vector_service
 from services.assignment_sync import serialize_assignment, merge_doc_eval_into_assignment
 from datetime import datetime
 import uuid
@@ -142,3 +142,4 @@ async def delete_assignment(assignment_id: str):
     """Remove the assignment record only — never deletes the linked Google Doc."""
     await supabase_service.delete_assignment(assignment_id)
     await redis_service.invalidate_assignment(assignment_id)
+    await rubric_vector_service.delete_assignment_vectors(assignment_id)

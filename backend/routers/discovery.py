@@ -194,9 +194,9 @@ async def supported_platforms():
             {"id": "canvas", "name": "Canvas LMS", "status": "supported"},
             {"id": "notion", "name": "Notion", "status": "supported"},
             {"id": "google_classroom", "name": "Google Classroom", "status": "supported"},
-            {"id": "trello", "name": "Trello", "status": "coming_soon"},
-            {"id": "jira", "name": "Jira", "status": "coming_soon"},
-            {"id": "asana", "name": "Asana", "status": "coming_soon"},
-            {"id": "clickup", "name": "ClickUp", "status": "coming_soon"},
+            {"id": "trello", "name": "Trello", "status": "supported"},
+            {"id": "jira", "name": "Jira", "status": "supported"},
+            {"id": "asana", "name": "Asana", "status": "supported"},
+            {"id": "clickup", "name": "ClickUp", "status": "supported"},
         ]
     }

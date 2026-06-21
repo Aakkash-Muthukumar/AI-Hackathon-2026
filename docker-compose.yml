@@ -15,11 +15,13 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack-server:latest
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    environment:
+      - REDIS_ARGS=--save 60 1 --appendonly yes
 
   phoenix:
     image: arizephoenix/phoenix:latest
