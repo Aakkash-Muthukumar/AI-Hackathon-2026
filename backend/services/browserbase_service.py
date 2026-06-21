@@ -81,8 +81,12 @@ async def create_connect_session(
         context = bb.contexts.create(project_id=_PROJECT_ID)
         context_id = context.id
 
+    # keep_alive=True keeps the Browserbase session alive after the Playwright
+    # control connection closes, so the live-view iframe stays interactive while
+    # the user logs in — even though we close Stagehand right after navigation.
     session = bb.sessions.create(
         project_id=_PROJECT_ID,
+        keep_alive=True,
         browser_settings={
             "context": {"id": context_id, "persist": True},
         },
@@ -97,8 +101,16 @@ async def create_connect_session(
     start_url = _START_URLS.get(platform, "about:blank")
 
     sh = await _stagehand_for_session(session.id)
-    await sh.page.goto(start_url)
-    # Do NOT call sh.close() — leave the session open for the user to log in.
+    try:
+        await sh.page.goto(start_url)
+    finally:
+        # Close the Playwright control connection — the Browserbase session keeps
+        # running (keep_alive=True) and the live-view iframe in the frontend stays
+        # interactive for the user to log in.
+        try:
+            await sh.close()
+        except Exception:
+            pass
 
     # Prefer the live view URL from the session object; fall back to the
     # constructed URL if the SDK doesn't expose live_urls on this version.

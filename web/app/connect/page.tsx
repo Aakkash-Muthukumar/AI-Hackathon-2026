@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { getUserId } from "@/lib/userId";
 import { Header } from "@/components/Header";
 import {
   ArrowLeft,
@@ -18,16 +19,6 @@ interface Platform {
   id: string;
   name: string;
   status: string;
-}
-
-// Stable user ID stored in localStorage so the backend can look up saved contexts.
-function getUserId(): string {
-  if (typeof window === "undefined") return "anon";
-  const stored = localStorage.getItem("scaffold_user_id");
-  if (stored) return stored;
-  const id = crypto.randomUUID();
-  localStorage.setItem("scaffold_user_id", id);
-  return id;
 }
 
 type Step = "idle" | "opening" | "live" | "scraping" | "done";

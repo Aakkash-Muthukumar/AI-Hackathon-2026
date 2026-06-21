@@ -1,15 +1,7 @@
 import { Assignment } from "./types";
+import { getUserId } from "./userId";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
-
-function getUserId(): string {
-  if (typeof window === "undefined") return "";
-  const stored = localStorage.getItem("scaffold_user_id");
-  if (stored) return stored;
-  const id = crypto.randomUUID();
-  localStorage.setItem("scaffold_user_id", id);
-  return id;
-}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const userId = getUserId();
