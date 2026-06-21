@@ -99,6 +99,88 @@ Return a JSON array. Each element:
         return [Task(**t) for t in tasks_data]
 
 
+async def score_requirements(assignment: Assignment, document_text: str) -> dict:
+    """
+    Score how well the document covers each assignment requirement.
+
+    Uses Anthropic prompt caching: the assignment rubric + task list are marked
+    as a stable cached prefix. Only the changing document text is billed at full
+    input price on repeated calls for the same assignment.
+
+    Returns compact JSON:
+      {
+        "requirements": {"<task_id>": {"score": 0-100, "missing": [...]}},
+        "overall": 0-100
+      }
+    """
+    rubric_text = json.dumps([r.model_dump() for r in assignment.rubric], indent=2)
+    task_lines = "\n".join(
+        f'  {t.id}: "{t.title}" — criteria: {"; ".join(t.success_criteria[:3])}'
+        for t in assignment.tasks
+    )
+
+    cached_prefix = f"""You are a precise assignment requirement evaluator.
+Do NOT mention word counts, keystroke counts, or document length — only content quality.
+
+Assignment: {assignment.title}
+
+Prompt:
+{assignment.prompt[:2000]}
+
+Rubric:
+{rubric_text}
+
+Tasks to score:
+{task_lines}
+
+Return ONLY compact JSON with no prose, no markdown fences:
+{{
+  "requirements": {{
+    "<task_id>": {{"score": <0-100>, "missing": ["specific missing element", ...]}},
+    ...
+  }},
+  "overall": <0-100>
+}}"""
+
+    with sentry_sdk.start_span(op="ai.pipeline", name="score_requirements"):
+        with sentry_sdk.start_span(op="ai.run", name="requirement_scoring") as span:
+            span.set_data("ai.model_id", _MODEL)
+            span.set_data("ai.input_messages", [
+                {"role": "system", "content": cached_prefix[:500]},
+                {"role": "user", "content": document_text[:200]},
+            ])
+            try:
+                response = client.messages.create(
+                    model=_MODEL,
+                    max_tokens=1024,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": cached_prefix,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"Document text:\n\n{document_text[:12000]}",
+                        }
+                    ],
+                )
+                span.set_data("ai.responses", [response.content[0].text[:500]])
+                span.set_data("ai.prompt_tokens.used", response.usage.input_tokens)
+                span.set_data("ai.completion_tokens.used", response.usage.output_tokens)
+                result = json.loads(_strip_fences(response.content[0].text))
+                # Derive overall if not returned
+                if "overall" not in result and result.get("requirements"):
+                    scores = [v.get("score", 0) for v in result["requirements"].values()]
+                    result["overall"] = round(sum(scores) / len(scores), 1) if scores else 0.0
+                return result
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                raise
+
+
 async def evaluate_progress(content: str, tasks: List[Task], assignment: Assignment) -> List[Task]:
     """Score each task 0-100 against the current document content."""
     prompt = f"""Assignment: {assignment.title}

@@ -7,9 +7,9 @@ import type { PlasmoCSConfig } from "plasmo"
 import { createRoot } from "react-dom/client"
 import { Sidebar } from "../components/Sidebar"
 
+// Google Docs is handled by gdocs-tracker.tsx (keystroke trigger + Drive API).
 export const config: PlasmoCSConfig = {
   matches: [
-    "https://docs.google.com/document/*",
     "https://www.notion.so/*",
     "https://notion.so/*",
   ],

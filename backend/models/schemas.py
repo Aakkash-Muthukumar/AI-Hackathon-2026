@@ -84,3 +84,20 @@ class ScrapeRequest(BaseModel):
     context_id: str
     platform: AssignmentSource
     user_id: str
+
+
+class RequirementScore(BaseModel):
+    score: float
+    missing: List[str] = []
+
+
+class EvaluateRequest(BaseModel):
+    doc_id: str
+    assignment_id: str
+    user_id: str
+
+
+class EvaluateResponse(BaseModel):
+    requirements: dict
+    overall: float
+    assignment_id: str

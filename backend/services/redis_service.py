@@ -106,6 +106,37 @@ async def get_connected_platforms(user_id: str) -> list[str]:
     return [k[len(prefix):] for k in keys]
 
 
+# ── Google OAuth token storage ────────────────────────────────────────────────
+
+async def save_google_token(user_id: str, token_data: dict):
+    r = await get_redis()
+    await r.set(f"google_token:{user_id}", json.dumps(token_data))
+
+
+async def get_google_token(user_id: str) -> Optional[dict]:
+    r = await get_redis()
+    raw = await r.get(f"google_token:{user_id}")
+    return json.loads(raw) if raw else None
+
+
+async def delete_google_token(user_id: str):
+    r = await get_redis()
+    await r.delete(f"google_token:{user_id}")
+
+
+# ── Evaluate result cache (per doc × assignment, short-lived) ─────────────────
+
+async def cache_eval_result(doc_id: str, assignment_id: str, result: dict, ttl: int = 300):
+    r = await get_redis()
+    await r.setex(f"eval:{doc_id}:{assignment_id}", ttl, json.dumps(result, default=str))
+
+
+async def get_cached_eval_result(doc_id: str, assignment_id: str) -> Optional[dict]:
+    r = await get_redis()
+    raw = await r.get(f"eval:{doc_id}:{assignment_id}")
+    return json.loads(raw) if raw else None
+
+
 # ── Progress history (ring buffer, last 100 entries) ─────────────────────────
 
 async def track_progress_history(assignment_id: str, completion: float):

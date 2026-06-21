@@ -9,7 +9,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from services import arize_service
-from routers import assignments, discovery
+from routers import assignments, discovery, google_auth, evaluate
 
 _sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
 if _sentry_dsn and "..." not in _sentry_dsn:
@@ -49,6 +49,8 @@ app.add_middleware(
 
 app.include_router(assignments.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
+app.include_router(evaluate.router, prefix="/api")
+app.include_router(google_auth.router)   # /auth/google/* — no /api prefix (browser redirects)
 
 
 @app.get("/health")
