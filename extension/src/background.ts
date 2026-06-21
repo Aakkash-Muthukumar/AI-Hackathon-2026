@@ -10,21 +10,51 @@ if (_sentryDsn && !_sentryDsn.includes("...")) {
 
 const API = process.env.PLASMO_PUBLIC_API_URL ?? "http://localhost:8000/api"
 const BACKEND = API.replace(/\/api$/, "")
+const DASHBOARD_URLS = [
+  "http://localhost:3000/*",
+  "http://127.0.0.1:3000/*",
+]
+const USER_ID_KEY = "scaffold_user_id"
 
 // Generate a stable user ID on first install, persisted in extension storage.
 chrome.runtime.onInstalled.addListener(async () => {
-  const stored = await chrome.storage.local.get("scaffold_user_id")
-  if (!stored.scaffold_user_id) {
-    await chrome.storage.local.set({ scaffold_user_id: crypto.randomUUID() })
+  const stored = await chrome.storage.local.get(USER_ID_KEY)
+  if (!stored[USER_ID_KEY]) {
+    await chrome.storage.local.set({ [USER_ID_KEY]: crypto.randomUUID() })
   }
 })
 
 async function getUserId(): Promise<string> {
-  const stored = await chrome.storage.local.get("scaffold_user_id")
-  if (stored.scaffold_user_id) return stored.scaffold_user_id as string
+  const stored = await chrome.storage.local.get(USER_ID_KEY)
+  if (stored[USER_ID_KEY]) return stored[USER_ID_KEY] as string
   const id = crypto.randomUUID()
-  await chrome.storage.local.set({ scaffold_user_id: id })
+  await chrome.storage.local.set({ [USER_ID_KEY]: id })
   return id
+}
+
+async function setUserId(userId: string): Promise<void> {
+  await chrome.storage.local.set({ [USER_ID_KEY]: userId })
+}
+
+/** Pull scaffold_user_id from an open dashboard tab (web localStorage). */
+async function syncUserIdFromDashboard(): Promise<string | null> {
+  const tabs = await chrome.tabs.query({ url: DASHBOARD_URLS })
+  if (!tabs.length || tabs[0].id == null) return null
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tabs[0].id },
+      func: (key: string) => localStorage.getItem(key),
+      args: [USER_ID_KEY],
+    })
+    if (typeof result === "string" && result) {
+      await setUserId(result)
+      return result
+    }
+  } catch (err) {
+    Sentry.captureException(err)
+  }
+  return null
 }
 
 function apiHeaders(userId: string): Record<string, string> {
@@ -34,17 +64,44 @@ function apiHeaders(userId: string): Record<string, string> {
   }
 }
 
+async function fetchAssignments(userId: string): Promise<unknown[]> {
+  const res = await fetch(`${API}/assignments/`, { headers: apiHeaders(userId) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = (await res.json()) as unknown[]
+  if (data.length > 0) return data
+
+  // Web dashboard stores a different user id in localStorage — sync and retry once.
+  const syncedId = await syncUserIdFromDashboard()
+  if (!syncedId || syncedId === userId) return data
+
+  const retry = await fetch(`${API}/assignments/`, { headers: apiHeaders(syncedId) })
+  if (!retry.ok) throw new Error(`HTTP ${retry.status}`)
+  return (await retry.json()) as unknown[]
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   // ── Assignment CRUD ─────────────────────────────────────────────────────────
 
+  if (msg.type === "SYNC_USER_ID") {
+    if (typeof msg.userId === "string" && msg.userId) {
+      setUserId(msg.userId)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }))
+    } else {
+      sendResponse({ ok: false, error: "Missing userId" })
+    }
+    return true
+  }
+
   if (msg.type === "LIST_ASSIGNMENTS") {
-    getUserId().then((userId) =>
-      fetch(`${API}/assignments/`, { headers: apiHeaders(userId) })
-        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-        .then((data) => sendResponse({ ok: true, data }))
-        .catch((err) => { Sentry.captureException(err); sendResponse({ ok: false, error: String(err) }) })
-    )
+    getUserId()
+      .then((userId) => fetchAssignments(userId))
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => {
+        Sentry.captureException(err)
+        sendResponse({ ok: false, error: String(err) })
+      })
     return true
   }
 
@@ -83,6 +140,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           doc_id: msg.docId,
           assignment_id: msg.assignmentId,
           user_id: userId,
+          force: Boolean(msg.force),
         }),
       })
         .then(async (r) => {

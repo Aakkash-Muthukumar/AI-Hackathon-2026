@@ -62,20 +62,25 @@ async def evaluate(body: EvaluateRequest):
 
     modified_time = meta.get("modifiedTime", "")
 
-    # 3a. Redis fast cache (120-s TTL)
-    cached = await redis_service.get_cached_eval_result(body.doc_id, body.assignment_id)
-    if cached and cached.get("modified_time") == modified_time and cached.get("result"):
-        return EvaluateResponse(**cached["result"])
+    if not body.force:
+        # 3a. Redis fast cache (120-s TTL)
+        cached = await redis_service.get_cached_eval_result(body.doc_id, body.assignment_id)
+        if cached and cached.get("modified_time") == modified_time and cached.get("result"):
+            return EvaluateResponse(**cached["result"])
 
-    # 3b. Supabase persistent cache — avoids Claude call when the doc hasn't changed
-    stored = await supabase_service.get_doc_evaluation(body.doc_id, body.assignment_id)
-    if stored and stored.get("doc_marker") == modified_time and stored.get("evaluation"):
-        eval_data = dict(stored["evaluation"])
-        eval_data["assignment_id"] = body.assignment_id
-        await redis_service.cache_eval_result(
-            body.doc_id, body.assignment_id, eval_data, modified_time
+        # 3b. Supabase persistent cache — avoids Claude call when the doc hasn't changed
+        stored = await supabase_service.get_doc_evaluation(body.doc_id, body.assignment_id)
+        if stored and stored.get("doc_marker") == modified_time and stored.get("evaluation"):
+            eval_data = dict(stored["evaluation"])
+            eval_data["assignment_id"] = body.assignment_id
+            await redis_service.cache_eval_result(
+                body.doc_id, body.assignment_id, eval_data, modified_time
+            )
+            return EvaluateResponse(**eval_data)
+    else:
+        logger.info(
+            "Force re-eval for doc_id=%s assignment=%s", body.doc_id, body.assignment_id
         )
-        return EvaluateResponse(**eval_data)
 
     # 4. Assignment
     assignment = await _load_assignment(body.assignment_id)

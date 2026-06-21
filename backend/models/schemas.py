@@ -97,6 +97,7 @@ class EvaluateRequest(BaseModel):
     doc_id: str
     assignment_id: str
     user_id: str
+    force: bool = False
 
 
 class EvaluateResponse(BaseModel):

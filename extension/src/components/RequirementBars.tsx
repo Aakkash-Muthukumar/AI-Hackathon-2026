@@ -1,3 +1,5 @@
+import { reqColor } from "../lib/reqColors"
+
 interface ReqScore {
   name?: string
   score: number
@@ -9,13 +11,6 @@ interface Props {
   overall: number
 }
 
-function scoreColor(pct: number): string {
-  if (pct === 100) return "#22c55e"
-  if (pct >= 70) return "#4f6ef7"
-  if (pct >= 40) return "#facc15"
-  return "#f87171"
-}
-
 export function RequirementBars({ requirements, overall }: Props) {
   const entries = Object.entries(requirements)
 
@@ -23,11 +18,11 @@ export function RequirementBars({ requirements, overall }: Props) {
     return <p className="text-xs text-gray-400 italic">Waiting for first evaluation…</p>
   }
 
-  const overallColor = scoreColor(overall)
+  const totalScore = entries.reduce((s, [, r]) => s + Math.max(0, r.score), 0)
 
   return (
     <div className="space-y-3">
-      {/* Overall */}
+      {/* Overall — stacked segments match collapsed bottom bar */}
       <div>
         <div className="flex justify-between items-center mb-1">
           <span
@@ -41,20 +36,36 @@ export function RequirementBars({ requirements, overall }: Props) {
           >
             Overall coverage
           </span>
-          <span style={{ fontSize: 12, fontWeight: 700, color: overallColor }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>
             {overall.toFixed(0)}%
           </span>
         </div>
-        <div style={{ height: 6, borderRadius: 99, background: "#e5e7eb", overflow: "hidden" }}>
+        <div style={{ height: 8, borderRadius: 99, background: "#e5e7eb", overflow: "hidden" }}>
           <div
             style={{
+              width: `${Math.min(100, Math.max(0, overall))}%`,
               height: "100%",
-              borderRadius: 99,
-              background: overallColor,
-              width: `${overall}%`,
+              display: "flex",
               transition: "width 0.5s ease",
             }}
-          />
+          >
+            {entries.map(([id, req]) => {
+              const share =
+                totalScore > 0
+                  ? (Math.max(0, req.score) / totalScore) * 100
+                  : 100 / entries.length
+              return (
+                <div
+                  key={id}
+                  style={{
+                    width: `${share}%`,
+                    height: "100%",
+                    background: reqColor(id),
+                  }}
+                />
+              )
+            })}
+          </div>
         </div>
       </div>
 
@@ -75,7 +86,7 @@ export function RequirementBars({ requirements, overall }: Props) {
         <div className="space-y-3">
           {entries.map(([id, req]) => {
             const pct = Math.min(100, Math.max(0, req.score))
-            const color = scoreColor(pct)
+            const color = reqColor(id)
             const label = req.name ?? id
             return (
               <div key={id}>
@@ -95,8 +106,20 @@ export function RequirementBars({ requirements, overall }: Props) {
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                     }}
                   >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: color,
+                        flexShrink: 0,
+                      }}
+                    />
                     {label}
                   </span>
                   <span

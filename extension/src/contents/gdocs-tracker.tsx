@@ -15,6 +15,7 @@ import type { PlasmoCSConfig } from "plasmo"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { createRoot } from "react-dom/client"
 import { RequirementBars } from "../components/RequirementBars"
+import { reqColor } from "../lib/reqColors"
 import { BookOpen, RefreshCw, ChevronLeft, ChevronRight, Link2, LogOut } from "lucide-react"
 
 export const config: PlasmoCSConfig = {
@@ -110,16 +111,20 @@ function getDocId(): string {
   return m ? m[1] : ""
 }
 
-// Stable color palette keyed by requirement ID (same ID → same color every render)
-const _SEGMENT_COLORS = [
-  "#4f6ef7", "#10b981", "#f59e0b", "#ef4444",
-  "#8b5cf6", "#06b6d4", "#f97316", "#ec4899",
-  "#14b8a6", "#84cc16",
-]
-function reqColor(id: string): string {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = ((h * 31) + id.charCodeAt(i)) >>> 0
-  return _SEGMENT_COLORS[h % _SEGMENT_COLORS.length]
+function docAssignmentKey(docId: string): string {
+  return `scaffold_doc_assignment:${docId}`
+}
+
+async function loadSavedAssignment(docId: string): Promise<string | null> {
+  if (!docId) return null
+  const stored = await chrome.storage.local.get(docAssignmentKey(docId))
+  const saved = stored[docAssignmentKey(docId)]
+  return typeof saved === "string" ? saved : null
+}
+
+async function saveAssignmentForDoc(docId: string, assignmentId: string): Promise<void> {
+  if (!docId) return
+  await chrome.storage.local.set({ [docAssignmentKey(docId)]: assignmentId })
 }
 
 interface Assignment {
@@ -137,7 +142,7 @@ interface EvalResult {
 // ── React component ───────────────────────────────────────────────────────────
 
 function GDocsTrackerSidebar() {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const [authorized, setAuthorized] = useState<boolean | null>(null)
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -148,14 +153,77 @@ function GDocsTrackerSidebar() {
 
   const evalInProgress = useRef(false)
   const pendingEval = useRef(false)
+  const pendingForce = useRef(false)
   const evalSequence = useRef(0)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
-  const docId = getDocId()
+  const [docId, setDocId] = useState(getDocId)
 
   // Adjust page margin so content isn't hidden behind the sidebar
   useEffect(() => {
     document.body.style.marginRight = collapsed ? "0" : "300px"
   }, [collapsed])
+
+  // Detect navigation to a different Google Doc in the same tab
+  useEffect(() => {
+    const tick = () => {
+      const id = getDocId()
+      setDocId((prev) => (prev === id ? prev : id))
+    }
+    tick()
+    const iv = setInterval(tick, 800)
+    return () => clearInterval(iv)
+  }, [])
+
+  const restoreAssignmentForDoc = useCallback(
+    async (id: string, list: Assignment[]) => {
+      if (!id || list.length === 0) {
+        setSelectedId(null)
+        return
+      }
+      const saved = await loadSavedAssignment(id)
+      if (saved && list.some((a) => a.id === saved)) {
+        setSelectedId(saved)
+      } else {
+        setSelectedId(null)
+        setScores(null)
+      }
+    },
+    []
+  )
+
+  const loadAssignments = useCallback(
+    (forDocId?: string) => {
+      chrome.runtime.sendMessage({ type: "LIST_ASSIGNMENTS" }, (res) => {
+        if (chrome.runtime.lastError) {
+          setError(chrome.runtime.lastError.message ?? "Could not load assignments")
+          return
+        }
+        if (!res?.ok) {
+          setError(res?.error ?? "Could not load assignments")
+          return
+        }
+        const list = (res.data ?? []) as Assignment[]
+        setAssignments(list)
+        if (list.length === 0) {
+          setSelectedId(null)
+          return
+        }
+        void restoreAssignmentForDoc(forDocId ?? docId, list)
+      })
+    },
+    [docId, restoreAssignmentForDoc]
+  )
+
+  // When the doc changes, clear scores and restore this doc's saved assignment (if any)
+  useEffect(() => {
+    setScores(null)
+    setError(null)
+    if (assignments.length > 0) {
+      void restoreAssignmentForDoc(docId, assignments)
+    } else {
+      setSelectedId(null)
+    }
+  }, [docId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Initial auth check ──────────────────────────────────────────────────────
 
@@ -163,19 +231,17 @@ function GDocsTrackerSidebar() {
     chrome.runtime.sendMessage({ type: "CHECK_GOOGLE_AUTH" }, (res) => {
       setAuthorized(res?.authorized ?? false)
     })
-    chrome.runtime.sendMessage({ type: "LIST_ASSIGNMENTS" }, (res) => {
-      if (res?.ok && res.data?.length) {
-        setAssignments(res.data)
-        setSelectedId(res.data[0].id)
-      }
-    })
-  }, [])
+    loadAssignments()
+  }, [loadAssignments])
 
   // ── Eval function ───────────────────────────────────────────────────────────
 
-  const runEval = useCallback(() => {
+  const runEval = useCallback((options?: { force?: boolean }) => {
+    const force = options?.force ?? false
+
     if (evalInProgress.current) {
       pendingEval.current = true
+      if (force) pendingForce.current = true
       return
     }
     if (!selectedId || !docId || !authorized) return
@@ -189,7 +255,7 @@ function GDocsTrackerSidebar() {
     setError(null)
 
     chrome.runtime.sendMessage(
-      { type: "EVALUATE_DOC", docId, assignmentId: selectedId },
+      { type: "EVALUATE_DOC", docId, assignmentId: selectedId, force },
       (res) => {
         evalInProgress.current = false
         setEvaluating(false)
@@ -208,19 +274,34 @@ function GDocsTrackerSidebar() {
         }
 
         if (pendingEval.current) {
+          const nextForce = pendingForce.current
           pendingEval.current = false
-          runEval()
+          pendingForce.current = false
+          runEval({ force: nextForce })
         }
       }
     )
   }, [selectedId, docId, authorized])
 
-  // Register the trigger callback whenever runEval changes
+  // Register keystroke trigger — only fires when an assignment is selected
   useEffect(() => {
-    _registerEvalCallback(runEval)
-    // Run immediately on mount / assignment change
-    runEval()
+    _registerEvalCallback(() => runEval())
   }, [runEval])
+
+  // Evaluate when user picks an assignment (including restored per-doc choice)
+  useEffect(() => {
+    if (selectedId && docId && authorized) {
+      runEval()
+    }
+  }, [selectedId, docId, authorized]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleAssignmentChange(id: string) {
+    if (!id) return
+    setSelectedId(id)
+    setScores(null)
+    setError(null)
+    void saveAssignmentForDoc(docId, id)
+  }
 
   // ── Google auth flow ────────────────────────────────────────────────────────
 
@@ -247,6 +328,7 @@ function GDocsTrackerSidebar() {
         if (res?.authorized) {
           setAuthorized(true)
           setAuthPolling(false)
+          loadAssignments()
         } else {
           pollAuthStatus(attempts + 1)
         }
@@ -261,61 +343,94 @@ function GDocsTrackerSidebar() {
     })
   }
 
-  // ── Collapsed: iOS-style segmented status bar along the bottom ──────────────
+  function handleRefresh() {
+    loadAssignments(docId)
+    runEval({ force: true })
+  }
+
+  // ── Collapsed: Apple-style stacked total bar + expand tab ───────────────────
 
   if (collapsed) {
     const entries = scores ? Object.entries(scores.requirements) : []
+    const overall = scores?.overall ?? 0
+    const totalScore = entries.reduce((s, [, r]) => s + Math.max(0, r.score), 0)
 
     return (
-      <div
-        onClick={() => setCollapsed(false)}
-        title="Click to expand Scaffold"
-        style={{
-          position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 10,
-          display: "flex",
-          cursor: "pointer",
-          zIndex: 999999,
-          overflow: "hidden",
-        }}
-      >
-        {entries.length === 0 ? (
-          // No scores yet — plain neutral bar
-          <div style={{ flex: 1, background: "#d1d5db" }} />
-        ) : (
-          entries.map(([id, req]) => {
-            const color = reqColor(id)
-            const label = req.name ?? id
-            return (
-              <div
-                key={id}
-                title={`${label}: ${req.score.toFixed(0)}%`}
-                style={{
-                  flex: 1,
-                  background: "#e5e7eb",
-                  position: "relative",
-                  borderRight: "1px solid #fff",
-                }}
-              >
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: `${Math.min(100, Math.max(0, req.score))}%`,
-                    background: color,
-                    transition: "width 0.5s ease",
-                  }}
-                />
-              </div>
-            )
-          })
-        )}
-      </div>
+      <>
+        {/* Right-edge tab — easy to find and click */}
+        <button
+          onClick={() => setCollapsed(false)}
+          title="Expand Scaffold"
+          style={{
+            position: "fixed",
+            right: 0,
+            top: "50%",
+            transform: "translateY(-50%)",
+            background: "#4f6ef7",
+            color: "#fff",
+            borderRadius: "8px 0 0 8px",
+            padding: "10px 6px",
+            border: "none",
+            cursor: "pointer",
+            zIndex: 999999,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 4,
+            boxShadow: "-2px 0 8px rgba(0,0,0,0.15)",
+          }}
+        >
+          <BookOpen size={16} />
+          <ChevronLeft size={12} />
+        </button>
+
+        {/* Single stacked progress bar (Apple storage style) */}
+        <div
+          onClick={() => setCollapsed(false)}
+          title={`Overall: ${overall.toFixed(0)}% — click to expand`}
+          style={{
+            position: "fixed",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 12,
+            background: "#e5e7eb",
+            cursor: "pointer",
+            zIndex: 999999,
+            overflow: "hidden",
+          }}
+        >
+          {entries.length === 0 || overall <= 0 ? (
+            <div style={{ width: `${Math.min(100, overall)}%`, height: "100%", background: "#d1d5db" }} />
+          ) : (
+            <div
+              style={{
+                width: `${Math.min(100, Math.max(0, overall))}%`,
+                height: "100%",
+                display: "flex",
+                transition: "width 0.5s ease",
+              }}
+            >
+              {entries.map(([id, req]) => {
+                const share = totalScore > 0 ? (Math.max(0, req.score) / totalScore) * 100 : 100 / entries.length
+                const label = req.name ?? id
+                return (
+                  <div
+                    key={id}
+                    title={`${label}: ${req.score.toFixed(0)}%`}
+                    style={{
+                      width: `${share}%`,
+                      height: "100%",
+                      background: reqColor(id),
+                      transition: "width 0.5s ease",
+                    }}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </>
     )
   }
 
@@ -343,16 +458,14 @@ function GDocsTrackerSidebar() {
           Scaffold
         </div>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {authorized && (
-            <button
-              onClick={runEval}
-              disabled={evaluating}
-              title="Evaluate now"
-              style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
-            >
-              <RefreshCw size={14} style={{ animation: evaluating ? "spin 1s linear infinite" : "none" }} />
-            </button>
-          )}
+          <button
+            onClick={handleRefresh}
+            disabled={evaluating}
+            title="Refresh assignments & evaluate"
+            style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
+          >
+            <RefreshCw size={14} style={{ animation: evaluating ? "spin 1s linear infinite" : "none" }} />
+          </button>
           <button
             onClick={() => setCollapsed(true)}
             style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
@@ -362,16 +475,19 @@ function GDocsTrackerSidebar() {
         </div>
       </div>
 
-      {/* Assignment selector */}
-      {authorized && assignments.length > 1 && (
+      {/* Assignment selector — always shown; user must pick before eval runs */}
+      {authorized && assignments.length > 0 && (
         <select
           value={selectedId ?? ""}
-          onChange={(e) => setSelectedId(e.target.value)}
+          onChange={(e) => handleAssignmentChange(e.target.value)}
           style={{
             margin: "10px 12px 0", padding: "6px 8px", borderRadius: 8,
             border: "1px solid #e5e7eb", fontSize: 12, color: "#374151",
           }}
         >
+          <option value="" disabled>
+            Select assignment…
+          </option>
           {assignments.map((a) => (
             <option key={a.id} value={a.id}>{a.title}</option>
           ))}
@@ -410,18 +526,25 @@ function GDocsTrackerSidebar() {
           </div>
         )}
 
-        {authorized && !selectedId && (
-          <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-            No assignments found.{" "}
+        {authorized && assignments.length > 0 && !selectedId && (
+          <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40, lineHeight: 1.6 }}>
+            Select an assignment above to start tracking this document.
+          </p>
+        )}
+
+        {authorized && assignments.length === 0 && (
+          <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40, lineHeight: 1.6 }}>
+            No assignments found.
+            <br />
             <a
               href="http://localhost:3000"
               target="_blank"
               rel="noreferrer"
               style={{ color: "#4f6ef7" }}
             >
-              Add one in the dashboard
-            </a>
-            , then refresh.
+              Open the dashboard
+            </a>{" "}
+            once to sync your account, then click refresh above.
           </p>
         )}
 
@@ -504,7 +627,7 @@ Object.assign(host.style, {
   pointerEvents: "none",
 })
 document.body.appendChild(host)
-document.body.style.marginRight = "300px"
+document.body.style.marginRight = "0"
 document.body.style.transition = "margin-right 0.2s ease"
 
 const shadow = host.attachShadow({ mode: "open" })

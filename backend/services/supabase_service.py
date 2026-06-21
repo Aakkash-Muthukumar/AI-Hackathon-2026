@@ -50,9 +50,19 @@ async def list_assignments(user_id: Optional[str] = None) -> List[dict]:
         sb = get_supabase()
         q = sb.table("assignments").select("*").order("deadline", desc=False)
         if user_id:
-            q = q.eq("user_id", user_id)
+            # Include legacy rows with no user_id so pre-migration assignments still appear.
+            q = q.or_(f"user_id.eq.{user_id},user_id.is.null")
         res = q.execute()
-        return res.data or []
+        rows = res.data or []
+        # Claim orphaned rows for the requesting user so future requests stay scoped.
+        if user_id:
+            for row in rows:
+                if row.get("user_id") is None:
+                    sb.table("assignments").update({"user_id": user_id}).eq(
+                        "id", row["id"]
+                    ).execute()
+                    row["user_id"] = user_id
+        return rows
     except Exception as e:
         sentry_sdk.capture_exception(e)
         return []
