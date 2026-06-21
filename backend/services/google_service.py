@@ -156,18 +156,40 @@ def _fetch_docx(creds: "Credentials", doc_id: str) -> str:
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
-def _fetch_sync(doc_id: str, token_data: dict) -> tuple[str, dict]:
+def _prepare_creds(token_data: dict) -> "Credentials":
+    creds = _dict_to_creds(token_data)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    return creds
+
+
+def _get_file_meta_sync(doc_id: str, token_data: dict) -> tuple[dict, dict]:
+    """Return (metadata dict with mimeType/name/modifiedTime, updated token_data)."""
+    creds = _prepare_creds(token_data)
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    meta = drive.files().get(
+        fileId=doc_id, fields="mimeType,name,modifiedTime"
+    ).execute()
+    return meta, _creds_to_dict(creds)
+
+
+async def get_file_metadata(doc_id: str, token_data: dict) -> tuple[dict, dict]:
+    _require_google()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _get_file_meta_sync, doc_id, token_data)
+
+
+def _fetch_sync(doc_id: str, token_data: dict, meta: Optional[dict] = None) -> tuple[str, dict]:
     """
     Fetch document plain text. Uses Docs API for native Google Docs,
     Drive export as fallback.
     """
-    creds = _dict_to_creds(token_data)
-
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-
+    creds = _prepare_creds(token_data)
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    meta = drive.files().get(fileId=doc_id, fields="mimeType,name").execute()
+
+    if meta is None:
+        meta = drive.files().get(fileId=doc_id, fields="mimeType,name").execute()
+
     mime = meta.get("mimeType", "")
     name = meta.get("name", "document")
 
@@ -204,7 +226,9 @@ def _fetch_sync(doc_id: str, token_data: dict) -> tuple[str, dict]:
     )
 
 
-async def fetch_document_text(doc_id: str, token_data: dict) -> tuple[str, dict]:
+async def fetch_document_text(
+    doc_id: str, token_data: dict, meta: Optional[dict] = None
+) -> tuple[str, dict]:
     """
     Async wrapper around _fetch_sync.
     Returns (document_plain_text, updated_token_data).
@@ -214,7 +238,7 @@ async def fetch_document_text(doc_id: str, token_data: dict) -> tuple[str, dict]
     _require_google()
     loop = asyncio.get_event_loop()
     try:
-        return await loop.run_in_executor(None, _fetch_sync, doc_id, token_data)
+        return await loop.run_in_executor(None, _fetch_sync, doc_id, token_data, meta)
     except Exception as e:
         sentry_sdk.capture_exception(e)
         raise

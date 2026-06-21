@@ -134,7 +134,9 @@ function GDocsTrackerSidebar() {
   const [authPolling, setAuthPolling] = useState(false)
 
   const evalInProgress = useRef(false)
+  const pendingEval = useRef(false)
   const evalSequence = useRef(0)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
   const docId = getDocId()
 
   // ── Initial auth check ──────────────────────────────────────────────────────
@@ -154,7 +156,10 @@ function GDocsTrackerSidebar() {
   // ── Eval function ───────────────────────────────────────────────────────────
 
   const runEval = useCallback(() => {
-    if (evalInProgress.current) return
+    if (evalInProgress.current) {
+      pendingEval.current = true
+      return
+    }
     if (!selectedId || !docId || !authorized) return
 
     evalInProgress.current = true
@@ -171,16 +176,22 @@ function GDocsTrackerSidebar() {
         evalInProgress.current = false
         setEvaluating(false)
 
-        if (seq !== evalSequence.current) return // stale — discard
+        if (seq !== evalSequence.current) return
 
         if (res?.ok) {
-          setScores(res.data)
+          setScores({ ...res.data })
+          setLastUpdatedAt(Date.now())
         } else {
           const msg = res?.error ?? "Evaluation failed"
           if (msg.includes("401") || msg.includes("not connected")) {
             setAuthorized(false)
           }
           setError(msg)
+        }
+
+        if (pendingEval.current) {
+          pendingEval.current = false
+          runEval()
         }
       }
     )
@@ -370,6 +381,7 @@ function GDocsTrackerSidebar() {
             )}
             {scores && (
               <RequirementBars
+                key={lastUpdatedAt ?? 0}
                 requirements={scores.requirements}
                 overall={scores.overall}
               />
@@ -385,7 +397,13 @@ function GDocsTrackerSidebar() {
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
           <span style={{ fontSize: 10, color: "#9ca3af" }}>
-            {evaluating ? "Evaluating…" : scores ? "Up to date" : "Waiting for activity"}
+            {evaluating
+              ? "Evaluating…"
+              : lastUpdatedAt
+              ? `Updated ${new Date(lastUpdatedAt).toLocaleTimeString()}`
+              : scores
+              ? "Up to date"
+              : "Waiting for activity"}
           </span>
           <button
             onClick={disconnectGoogle}

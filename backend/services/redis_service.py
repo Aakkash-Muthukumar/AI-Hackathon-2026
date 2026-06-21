@@ -142,9 +142,20 @@ async def pop_oauth_verifier(user_id: str) -> Optional[str]:
 
 # ── Evaluate result cache (per doc × assignment, short-lived) ─────────────────
 
-async def cache_eval_result(doc_id: str, assignment_id: str, result: dict, ttl: int = 300):
+async def cache_eval_result(
+    doc_id: str,
+    assignment_id: str,
+    result: dict,
+    modified_time: str,
+    ttl: int = 120,
+):
     r = await get_redis()
-    await r.setex(f"eval:{doc_id}:{assignment_id}", ttl, json.dumps(result, default=str))
+    payload = {"modified_time": modified_time, "result": result}
+    await r.setex(
+        f"eval:{doc_id}:{assignment_id}",
+        ttl,
+        json.dumps(payload, default=str),
+    )
 
 
 async def get_cached_eval_result(doc_id: str, assignment_id: str) -> Optional[dict]:
