@@ -5,10 +5,18 @@ Install: pip install google-auth-oauthlib google-api-python-client
 """
 import os
 import json
+import logging
 import asyncio
 import sentry_sdk
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class DriveFileNotFoundError(Exception):
+    """Drive returned 404/notFound — file doesn't exist or caller lacks access."""
+
 
 GOOGLE_AVAILABLE = False
 try:
@@ -141,7 +149,12 @@ def _extract_docs_api_text(document: dict) -> str:
 
 def _fetch_via_docs_api(creds: "Credentials", doc_id: str) -> str:
     service = build("docs", "v1", credentials=creds, cache_discovery=False)
-    document = service.documents().get(documentId=doc_id).execute()
+    try:
+        document = service.documents().get(documentId=doc_id).execute()
+    except Exception as e:
+        if getattr(getattr(e, "resp", None), "status", None) == 404:
+            raise DriveFileNotFoundError(str(e)) from e
+        raise
     return _extract_docs_api_text(document)
 
 
@@ -167,9 +180,17 @@ def _get_file_meta_sync(doc_id: str, token_data: dict) -> tuple[dict, dict]:
     """Return (metadata dict with mimeType/name/modifiedTime, updated token_data)."""
     creds = _prepare_creds(token_data)
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    meta = drive.files().get(
-        fileId=doc_id, fields="mimeType,name,modifiedTime"
-    ).execute()
+    try:
+        meta = drive.files().get(
+            fileId=doc_id, fields="mimeType,name,modifiedTime"
+        ).execute()
+    except Exception as e:
+        if getattr(getattr(e, "resp", None), "status", None) == 404:
+            logger.info(
+                "Drive 404 for doc_id=%s — wrong account or doc not yet saved", doc_id
+            )
+            raise DriveFileNotFoundError(str(e)) from e
+        raise
     return meta, _creds_to_dict(creds)
 
 
@@ -199,6 +220,8 @@ def _fetch_sync(doc_id: str, token_data: dict, meta: Optional[dict] = None) -> t
         try:
             text = _fetch_via_docs_api(creds, doc_id)
             return text, _creds_to_dict(creds)
+        except DriveFileNotFoundError:
+            raise
         except Exception as e:
             errors.append(f"Docs API: {e}")
 
@@ -207,6 +230,8 @@ def _fetch_sync(doc_id: str, token_data: dict, meta: Optional[dict] = None) -> t
             text = content.decode("utf-8") if isinstance(content, bytes) else str(content)
             return text, _creds_to_dict(creds)
         except Exception as e:
+            if getattr(getattr(e, "resp", None), "status", None) == 404:
+                raise DriveFileNotFoundError(str(e)) from e
             errors.append(f"Drive export: {e}")
 
         raise RuntimeError(

@@ -136,11 +136,22 @@ Tasks to score:
 Return ONLY compact JSON with no prose, no markdown fences:
 {{
   "requirements": {{
-    "<task_id>": {{"score": <0-100>, "missing": ["specific missing element", ...]}},
+    "<task_id>": {{
+      "name": "<task title exactly as given above>",
+      "score": <0-100>,
+      "missing": ["short casual gap — 2 to 6 words, plain language, lead with the gap"]
+    }},
     ...
   }},
   "overall": <0-100>
-}}"""
+}}
+
+Rules for "missing" entries:
+- 2 to 6 words only — fragments, not sentences
+- Plain everyday language, no academic jargon
+- Lead with what's missing, e.g. "No thesis yet", "Missing counterargument", "Evidence too vague", "Conclusion needed"
+- Do NOT write "The essay does not..." or "This section lacks..."
+"""
 
     with sentry_sdk.start_span(op="ai.pipeline", name="score_requirements"):
         with sentry_sdk.start_span(op="ai.run", name="requirement_scoring") as span:
@@ -175,6 +186,11 @@ Return ONLY compact JSON with no prose, no markdown fences:
                 if "overall" not in result and result.get("requirements"):
                     scores = [v.get("score", 0) for v in result["requirements"].values()]
                     result["overall"] = round(sum(scores) / len(scores), 1) if scores else 0.0
+                # Backfill name from task list if Claude omitted it
+                id_to_name = {t.id: t.title for t in assignment.tasks}
+                for task_id, req in result.get("requirements", {}).items():
+                    if not req.get("name"):
+                        req["name"] = id_to_name.get(task_id, task_id)
                 return result
             except Exception as e:
                 sentry_sdk.capture_exception(e)

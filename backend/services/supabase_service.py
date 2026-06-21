@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Any, Optional, List
 import sentry_sdk
 
@@ -64,3 +65,47 @@ async def delete_assignment(assignment_id: str) -> None:
     except Exception as e:
         sentry_sdk.capture_exception(e)
         raise
+
+
+async def upsert_doc_evaluation(
+    doc_id: str, assignment_id: str, evaluation: dict, doc_marker: str
+) -> None:
+    try:
+        sb = get_supabase()
+        sb.table("doc_evaluations").upsert({
+            "doc_id": doc_id,
+            "assignment_id": assignment_id,
+            "evaluation": evaluation,
+            "doc_marker": doc_marker,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).execute()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        raise
+
+
+async def get_doc_evaluation(doc_id: str, assignment_id: str) -> Optional[dict]:
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("doc_evaluations")
+            .select("*")
+            .eq("doc_id", doc_id)
+            .eq("assignment_id", assignment_id)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return None
+
+
+async def update_assignment_completion(assignment_id: str, overall: float) -> None:
+    try:
+        sb = get_supabase()
+        sb.table("assignments").update({
+            "overall_completion": overall,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", assignment_id).execute()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)

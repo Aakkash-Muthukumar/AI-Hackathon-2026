@@ -110,15 +110,28 @@ function getDocId(): string {
   return m ? m[1] : ""
 }
 
+// Stable color palette keyed by requirement ID (same ID → same color every render)
+const _SEGMENT_COLORS = [
+  "#4f6ef7", "#10b981", "#f59e0b", "#ef4444",
+  "#8b5cf6", "#06b6d4", "#f97316", "#ec4899",
+  "#14b8a6", "#84cc16",
+]
+function reqColor(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = ((h * 31) + id.charCodeAt(i)) >>> 0
+  return _SEGMENT_COLORS[h % _SEGMENT_COLORS.length]
+}
+
 interface Assignment {
   id: string
   title: string
 }
 
 interface EvalResult {
-  requirements: Record<string, { score: number; missing: string[] }>
+  requirements: Record<string, { name?: string; score: number; missing: string[] }>
   overall: number
   assignment_id: string
+  unavailable_reason?: string
 }
 
 // ── React component ───────────────────────────────────────────────────────────
@@ -138,6 +151,11 @@ function GDocsTrackerSidebar() {
   const evalSequence = useRef(0)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
   const docId = getDocId()
+
+  // Adjust page margin so content isn't hidden behind the sidebar
+  useEffect(() => {
+    document.body.style.marginRight = collapsed ? "0" : "300px"
+  }, [collapsed])
 
   // ── Initial auth check ──────────────────────────────────────────────────────
 
@@ -243,23 +261,61 @@ function GDocsTrackerSidebar() {
     })
   }
 
-  // ── Collapsed pill ──────────────────────────────────────────────────────────
+  // ── Collapsed: iOS-style segmented status bar along the bottom ──────────────
 
   if (collapsed) {
+    const entries = scores ? Object.entries(scores.requirements) : []
+
     return (
-      <button
+      <div
         onClick={() => setCollapsed(false)}
+        title="Click to expand Scaffold"
         style={{
-          position: "fixed", right: 0, top: "50%", transform: "translateY(-50%)",
-          background: "#4f6ef7", color: "#fff", borderRadius: "8px 0 0 8px",
-          padding: "10px 6px", border: "none", cursor: "pointer", zIndex: 999999,
-          display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-          boxShadow: "-2px 0 8px rgba(0,0,0,0.15)",
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 10,
+          display: "flex",
+          cursor: "pointer",
+          zIndex: 999999,
+          overflow: "hidden",
         }}
       >
-        <BookOpen size={16} />
-        <ChevronLeft size={12} />
-      </button>
+        {entries.length === 0 ? (
+          // No scores yet — plain neutral bar
+          <div style={{ flex: 1, background: "#d1d5db" }} />
+        ) : (
+          entries.map(([id, req]) => {
+            const color = reqColor(id)
+            const label = req.name ?? id
+            return (
+              <div
+                key={id}
+                title={`${label}: ${req.score.toFixed(0)}%`}
+                style={{
+                  flex: 1,
+                  background: "#e5e7eb",
+                  position: "relative",
+                  borderRight: "1px solid #fff",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: `${Math.min(100, Math.max(0, req.score))}%`,
+                    background: color,
+                    transition: "width 0.5s ease",
+                  }}
+                />
+              </div>
+            )
+          })
+        )}
+      </div>
     )
   }
 
@@ -379,7 +435,25 @@ function GDocsTrackerSidebar() {
             {error && (
               <p style={{ color: "#ef4444", fontSize: 11, marginBottom: 10 }}>{error}</p>
             )}
-            {scores && (
+            {scores?.unavailable_reason === "not_found" && (
+              <div
+                style={{
+                  marginTop: 20,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  background: "#fef9c3",
+                  border: "1px solid #fde047",
+                  fontSize: 12,
+                  color: "#713f12",
+                  lineHeight: 1.6,
+                }}
+              >
+                <strong>Can't read this document.</strong>
+                <br />
+                Make sure it's open in the signed-in Google account and has been saved at least once. If it's brand new, type a few characters to save it first.
+              </div>
+            )}
+            {scores && !scores.unavailable_reason && (
               <RequirementBars
                 key={lastUpdatedAt ?? 0}
                 requirements={scores.requirements}

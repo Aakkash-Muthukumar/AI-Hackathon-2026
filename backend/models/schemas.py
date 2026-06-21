@@ -36,6 +36,7 @@ class Task(BaseModel):
 
 class Assignment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: Optional[str] = None
     title: str
     deadline: Optional[datetime] = None
     source: AssignmentSource = AssignmentSource.MANUAL
@@ -87,6 +88,7 @@ class ScrapeRequest(BaseModel):
 
 
 class RequirementScore(BaseModel):
+    name: Optional[str] = None
     score: float
     missing: List[str] = []
 
@@ -101,3 +103,4 @@ class EvaluateResponse(BaseModel):
     requirements: dict
     overall: float
     assignment_id: str
+    unavailable_reason: Optional[str] = None

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from models.schemas import (
     DiscoveryRequest,
@@ -8,17 +9,22 @@ from models.schemas import (
     AssignmentSource,
 )
 from services import browserbase_service, supabase_service, redis_service, assignment_service
-import uuid
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _persist_assignments(raw_list: list, platform: AssignmentSource):
+async def _persist_assignments(raw_list: list, platform: AssignmentSource, user_id: str):
     for raw in raw_list:
         normalized = browserbase_service.normalize_assignment(raw, platform)
-        assignment = Assignment(id=str(uuid.uuid4()), **normalized)
+        # Stable ID prevents duplicates when the user re-syncs the same platform.
+        assignment_id = browserbase_service.stable_assignment_id(
+            user_id, platform.value, normalized["title"]
+        )
+        assignment = Assignment(id=assignment_id, user_id=user_id, **normalized)
         assignment.tasks = await assignment_service.analyze_rubric(assignment)
 
         data = assignment.model_dump()
@@ -73,10 +79,20 @@ async def scrape(body: ScrapeRequest, background_tasks: BackgroundTasks):
         raise HTTPException(503, "Browserbase not configured on this server")
 
     async def _run():
-        raw_list = await browserbase_service.scrape_authenticated_session(
-            body.platform, body.session_id
-        )
-        await _persist_assignments(raw_list, body.platform)
+        try:
+            raw_list = await browserbase_service.scrape_authenticated_session(
+                body.platform, body.session_id
+            )
+            await _persist_assignments(raw_list, body.platform, body.user_id)
+            logger.info(
+                "Scraped %d assignments from %s for user %s",
+                len(raw_list), body.platform, body.user_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Scrape failed for user %s platform %s: %s",
+                body.user_id, body.platform, exc, exc_info=True,
+            )
 
     background_tasks.add_task(_run)
     return {

@@ -24,3 +24,18 @@ create index if not exists assignments_user_id_idx  on public.assignments (user_
 -- The backend talks to Supabase with the service role key, which bypasses RLS.
 -- Enable RLS so that anon/public keys cannot read or write directly.
 alter table public.assignments enable row level security;
+
+-- Persisted Google Docs evaluation results (one row per doc+assignment pair).
+-- doc_marker stores the Drive modifiedTime at eval time so staleness can be detected
+-- without calling Claude on every page open.
+create table if not exists public.doc_evaluations (
+    doc_id          text        not null,
+    assignment_id   text        not null,
+    evaluation      jsonb       not null,
+    doc_marker      text        not null,
+    updated_at      timestamptz not null default now(),
+    primary key (doc_id, assignment_id)
+);
+
+create index if not exists doc_eval_assignment_idx on public.doc_evaluations (assignment_id);
+alter table public.doc_evaluations enable row level security;

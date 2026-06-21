@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional
 from models.schemas import Assignment, AssignmentCreate, ProgressUpdateRequest
 from services import supabase_service, redis_service, assignment_service, progress_service
 from datetime import datetime
@@ -8,14 +9,14 @@ router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 
 @router.get("/", response_model=list[Assignment])
-async def list_assignments():
-    rows = await supabase_service.list_assignments()
+async def list_assignments(x_user_id: Optional[str] = Header(None)):
+    rows = await supabase_service.list_assignments(user_id=x_user_id)
     return [Assignment(**r) for r in rows]
 
 
 @router.post("/", response_model=Assignment)
-async def create_assignment(body: AssignmentCreate):
-    assignment = Assignment(id=str(uuid.uuid4()), **body.model_dump())
+async def create_assignment(body: AssignmentCreate, x_user_id: Optional[str] = Header(None)):
+    assignment = Assignment(id=str(uuid.uuid4()), user_id=x_user_id, **body.model_dump())
     assignment.tasks = await assignment_service.analyze_rubric(assignment)
 
     data = _serialize(assignment)

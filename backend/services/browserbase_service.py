@@ -11,9 +11,13 @@ Context IDs are saved to Redis (30 days) so future syncs reuse the same
 authenticated context without requiring the user to log in again.
 """
 import os
+import hashlib
+import logging
 import sentry_sdk
 from typing import List, Optional
 from models.schemas import AssignmentSource
+
+logger = logging.getLogger(__name__)
 
 _bb: Optional[object] = None
 _PROJECT_ID: str = ""
@@ -96,13 +100,28 @@ async def create_connect_session(
     await sh.page.goto(start_url)
     # Do NOT call sh.close() — leave the session open for the user to log in.
 
-    live_view_url = f"https://www.browserbase.com/sessions/{session.id}"
+    # Prefer the live view URL from the session object; fall back to the
+    # constructed URL if the SDK doesn't expose live_urls on this version.
+    live_view_url = _extract_live_view_url(session)
 
     return {
         "session_id": session.id,
         "live_view_url": live_view_url,
         "context_id": context_id,
     }
+
+
+def _extract_live_view_url(session) -> str:
+    """Pull the live view URL from the Browserbase session object."""
+    try:
+        live_urls = getattr(session, "live_urls", None)
+        if live_urls:
+            url = getattr(live_urls, "live", None) or getattr(live_urls, "liveView", None)
+            if url:
+                return url
+    except Exception:
+        pass
+    return f"https://www.browserbase.com/sessions/{session.id}"
 
 
 # ── Phase 2: Scrape with an already-authenticated session ─────────────────────
@@ -179,16 +198,33 @@ async def scrape_authenticated_session(
     if not scraper:
         raise ValueError(f"Platform '{platform}' not yet supported")
 
+    sh = await _stagehand_for_session(session_id)
     try:
-        sh = await _stagehand_for_session(session_id)
         results = await scraper(sh)
-        await sh.close()
         return results
     except Exception as e:
         sentry_sdk.capture_exception(e)
         raise
     finally:
-        bb.sessions.complete(session_id)
+        try:
+            await sh.close()
+        except Exception:
+            pass
+        try:
+            # REQUEST_RELEASE signals Browserbase that we're done with the session.
+            bb.sessions.update(session_id, status="REQUEST_RELEASE")
+        except Exception as term_err:
+            logger.warning("Could not release Browserbase session %s: %s", session_id, term_err)
+
+
+def stable_assignment_id(user_id: str, platform: str, title: str) -> str:
+    """
+    Deterministic UUID-shaped ID so re-syncing the same platform upserts
+    existing assignments instead of creating duplicates.
+    """
+    key = f"{user_id}:{platform}:{title.lower().strip()}"
+    h = hashlib.sha256(key.encode()).hexdigest()
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
 def normalize_assignment(raw: dict, source: AssignmentSource) -> dict:

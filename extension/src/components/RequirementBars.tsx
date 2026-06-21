@@ -1,4 +1,5 @@
 interface ReqScore {
+  name?: string
   score: number
   missing: string[]
 }
@@ -72,11 +73,12 @@ export function RequirementBars({ requirements, overall }: Props) {
         </p>
 
         <div className="space-y-3">
-          {entries.map(([name, { score, missing }]) => {
-            const pct = Math.min(100, Math.max(0, score))
+          {entries.map(([id, req]) => {
+            const pct = Math.min(100, Math.max(0, req.score))
             const color = scoreColor(pct)
+            const label = req.name ?? id
             return (
-              <div key={name}>
+              <div key={id}>
                 <div
                   style={{
                     display: "flex",
@@ -95,7 +97,7 @@ export function RequirementBars({ requirements, overall }: Props) {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {name}
+                    {label}
                   </span>
                   <span
                     style={{ fontSize: 11, fontWeight: 700, color, marginLeft: 4, flexShrink: 0 }}
@@ -116,19 +118,25 @@ export function RequirementBars({ requirements, overall }: Props) {
                     }}
                   />
                 </div>
-                {missing.length > 0 && (
-                  <ul style={{ marginTop: 4, paddingLeft: 0, listStyle: "none" }}>
-                    {missing.slice(0, 3).map((m, i) => (
+                {req.missing.length > 0 && (
+                  <ul
+                    style={{
+                      marginTop: 5,
+                      paddingLeft: 12,
+                      listStyleType: "disc",
+                    }}
+                  >
+                    {req.missing.slice(0, 4).map((m, i) => (
                       <li
                         key={i}
-                        style={{ fontSize: 10, color: "#92400e", lineHeight: 1.5 }}
+                        style={{ fontSize: 10, color: "#92400e", lineHeight: 1.6 }}
                       >
-                        ↳ {m}
+                        {m}
                       </li>
                     ))}
-                    {missing.length > 3 && (
-                      <li style={{ fontSize: 10, color: "#9ca3af" }}>
-                        +{missing.length - 3} more
+                    {req.missing.length > 4 && (
+                      <li style={{ fontSize: 10, color: "#9ca3af", listStyleType: "none" }}>
+                        +{req.missing.length - 4} more
                       </li>
                     )}
                   </ul>

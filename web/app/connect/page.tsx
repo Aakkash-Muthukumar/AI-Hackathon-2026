@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { Header } from "@/components/Header";
@@ -47,6 +47,8 @@ export default function Connect() {
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
+  const [newAssignmentCount, setNewAssignmentCount] = useState<number | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const userId = getUserId();
 
@@ -93,6 +95,17 @@ export default function Connect() {
     if (!session) return;
     setStep("scraping");
     setError(null);
+    setNewAssignmentCount(null);
+
+    // Snapshot how many assignments exist right now so we can detect new ones.
+    let baselineCount = 0;
+    try {
+      const existing = await api.assignments.list();
+      baselineCount = existing.length;
+    } catch {
+      // Non-fatal — polling will still work, just won't show a delta.
+    }
+
     try {
       await api.discovery.scrape(
         session.platform,
@@ -100,19 +113,46 @@ export default function Connect() {
         session.contextId,
         userId
       );
-      setDoneMessage(
-        `Scanning ${session.platform} for assignments. They'll appear on the dashboard in a few seconds.`
-      );
+      const platform = session.platform;
       setStep("done");
       setSession(null);
-      setConnected((prev) =>
-        prev.includes(session.platform) ? prev : [...prev, session.platform]
-      );
+      setDoneMessage(`Scanning ${platform} for assignments…`);
+      setConnected((prev) => (prev.includes(platform) ? prev : [...prev, platform]));
+
+      // Poll until new assignments appear (up to 2 minutes).
+      let attempts = 0;
+      pollRef.current = setInterval(async () => {
+        attempts += 1;
+        try {
+          const updated = await api.assignments.list();
+          const added = updated.length - baselineCount;
+          if (added > 0) {
+            setNewAssignmentCount(added);
+            setDoneMessage(
+              `Found ${added} new assignment${added === 1 ? "" : "s"} from ${platform}.`
+            );
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+          } else if (attempts >= 40) {
+            // 40 × 3 s = 2 min timeout
+            setDoneMessage(
+              `Scan complete. Check the dashboard — new assignments may take a moment to appear.`
+            );
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+          }
+        } catch {
+          // ignore transient fetch errors during polling
+        }
+      }, 3_000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Scan failed");
       setStep("live");
     }
   }
+
+  // Clean up poll on unmount
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   function handleCancel() {
     setSession(null);
@@ -150,8 +190,17 @@ export default function Connect() {
 
         {doneMessage && (
           <div className="mb-6 flex items-start gap-2 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
-            <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
-            <span>{doneMessage}</span>
+            {newAssignmentCount !== null ? (
+              <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
+            ) : (
+              <Loader2 size={16} className="shrink-0 mt-0.5 animate-spin" />
+            )}
+            <span>
+              {doneMessage}{" "}
+              {newAssignmentCount !== null && (
+                <Link href="/" className="underline font-medium">View dashboard →</Link>
+              )}
+            </span>
           </div>
         )}
         {error && (
