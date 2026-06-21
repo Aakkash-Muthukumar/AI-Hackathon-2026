@@ -34,10 +34,12 @@ export function AssignmentCard({ assignment }: Props) {
           <span
             className={clsx(
               "shrink-0 text-xs font-medium px-2 py-0.5 rounded-full",
-              URGENCY_COLORS[urgency]
+              assignment.status === "completed"
+                ? "bg-green-100 text-green-700"
+                : URGENCY_COLORS[urgency]
             )}
           >
-            {URGENCY_LABELS[urgency]}
+            {assignment.status === "completed" ? "Completed" : URGENCY_LABELS[urgency]}
           </span>
         </div>
 
@@ -67,31 +69,6 @@ export function AssignmentCard({ assignment }: Props) {
             </a>
           )}
         </div>
-
-        {assignment.tasks.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-x-4 gap-y-1">
-            {assignment.tasks.slice(0, 4).map((t) => (
-              <div key={t.id} className="flex items-center gap-1.5 text-xs text-gray-600">
-                <div
-                  className={clsx(
-                    "w-1.5 h-1.5 rounded-full shrink-0",
-                    t.completion === 100
-                      ? "bg-green-400"
-                      : t.completion > 0
-                      ? "bg-scaffold-400"
-                      : "bg-gray-300"
-                  )}
-                />
-                <span className="truncate">{t.title}</span>
-              </div>
-            ))}
-            {assignment.tasks.length > 4 && (
-              <div className="text-xs text-gray-400 col-span-2">
-                +{assignment.tasks.length - 4} more tasks
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </Link>
   );

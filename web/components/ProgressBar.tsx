@@ -26,7 +26,7 @@ export function ProgressBar({ value, size = "md", showLabel = true }: Props) {
         />
       </div>
       {showLabel && (
-        <span className="w-10 text-right text-sm font-medium tabular-nums">
+        <span className="w-10 text-right text-sm font-medium tabular-nums text-scaffold-700">
           {pct.toFixed(0)}%
         </span>
       )}

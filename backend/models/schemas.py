@@ -17,6 +17,17 @@ class AssignmentSource(str, Enum):
     MANUAL = "manual"
 
 
+class GuidanceLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class AssignmentStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+
+
 class RubricItem(BaseModel):
     criterion: str
     points: Optional[int] = None
@@ -45,6 +56,8 @@ class Assignment(BaseModel):
     tasks: List[Task] = []
     overall_completion: float = 0.0
     document_url: Optional[str] = None
+    guidance_level: GuidanceLevel = GuidanceLevel.MEDIUM
+    status: AssignmentStatus = AssignmentStatus.ACTIVE
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -56,6 +69,7 @@ class AssignmentCreate(BaseModel):
     prompt: str
     rubric: List[RubricItem] = []
     document_url: Optional[str] = None
+    guidance_level: GuidanceLevel = GuidanceLevel.MEDIUM
 
 
 class ProgressUpdateRequest(BaseModel):

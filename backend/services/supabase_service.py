@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import Any, Optional, List
 import sentry_sdk
@@ -108,6 +109,40 @@ async def get_doc_evaluation(doc_id: str, assignment_id: str) -> Optional[dict]:
     except Exception as e:
         sentry_sdk.capture_exception(e)
         return None
+
+
+async def get_latest_doc_evaluation(assignment_id: str) -> Optional[dict]:
+    """Most recent extension eval for an assignment (any linked doc)."""
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("doc_evaluations")
+            .select("*")
+            .eq("assignment_id", assignment_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return None
+
+
+async def update_assignment_progress(
+    assignment_id: str, tasks: list, overall: float
+) -> None:
+    """Update task scores + overall without a full-row upsert."""
+    try:
+        sb = get_supabase()
+        sb.table("assignments").update({
+            "tasks": tasks,
+            "overall_completion": overall,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", assignment_id).execute()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        raise
 
 
 async def update_assignment_completion(assignment_id: str, overall: float) -> None:

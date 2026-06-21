@@ -1,3 +1,19 @@
+export type GuidanceLevel = "low" | "medium" | "high";
+
+export const GUIDANCE_LABELS: Record<GuidanceLevel, string> = {
+  low: "Low — fewer, broader tasks",
+  medium: "Medium — balanced breakdown",
+  high: "High — granular, detailed tasks",
+};
+
+export const GUIDANCE_TASK_HINT: Record<GuidanceLevel, string> = {
+  low: "Fewer, broader tasks",
+  medium: "Balanced breakdown",
+  high: "Granular, detailed tasks",
+};
+
+export type AssignmentStatus = "active" | "completed";
+
 export type AssignmentSource =
   | "canvas"
   | "notion"
@@ -36,6 +52,8 @@ export interface Assignment {
   tasks: Task[];
   overall_completion: number;
   document_url?: string;
+  guidance_level?: GuidanceLevel;
+  status?: AssignmentStatus;
   created_at: string;
   updated_at: string;
 }

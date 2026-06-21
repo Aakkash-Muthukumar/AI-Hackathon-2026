@@ -23,3 +23,12 @@ export function reqColor(id: string): string {
 export function reqColorAt(index: number): string {
   return REQ_COLORS[index % REQ_COLORS.length]
 }
+
+/** Per-requirement gradient — flows from this index's ramp color to the next darker step.
+ *  Matches the bottom bar segment at the same index. */
+export function reqGradientAt(index: number): string {
+  const i = index % REQ_COLORS.length
+  const from = REQ_COLORS[i]
+  const to = REQ_COLORS[Math.min(i + 1, REQ_COLORS.length - 1)]
+  return `linear-gradient(90deg, ${from} 0%, ${to} 100%)`
+}

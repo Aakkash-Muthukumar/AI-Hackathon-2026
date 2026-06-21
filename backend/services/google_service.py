@@ -30,8 +30,12 @@ except ImportError:
 
 _SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/documents.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/documents",
 ]
+# Google may return previously-granted scopes (e.g. documents.readonly) when users
+# reconnect after a scope change. oauthlib rejects that mismatch by default.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 _REDIRECT_URI = os.getenv(
     "GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
 )
@@ -65,8 +69,7 @@ def get_auth_url(state: str) -> tuple[str, str]:
     url, _ = flow.authorization_url(
         access_type="offline",
         state=state,
-        prompt="consent",          # always request refresh token
-        include_granted_scopes="true",
+        prompt="consent",  # always request refresh token
     )
     return url, flow.code_verifier
 
@@ -79,6 +82,16 @@ def exchange_code(code: str, code_verifier: str) -> dict:
     flow.code_verifier = code_verifier
     flow.fetch_token(code=code)
     return _creds_to_dict(flow.credentials)
+
+
+def _normalize_scopes(scopes: list[str] | None) -> list[str]:
+    """Keep only scopes we use; drop legacy documents.readonly if documents is present."""
+    if not scopes:
+        return list(_SCOPES)
+    kept = [s for s in scopes if s in _SCOPES]
+    if kept:
+        return kept
+    return list(_SCOPES)
 
 
 def _creds_to_dict(creds: "Credentials") -> dict:
@@ -95,7 +108,7 @@ def _creds_to_dict(creds: "Credentials") -> dict:
         "token_uri": creds.token_uri,
         "client_id": creds.client_id,
         "client_secret": creds.client_secret,
-        "scopes": list(creds.scopes or _SCOPES),
+        "scopes": _normalize_scopes(list(creds.scopes) if creds.scopes else None),
         "expiry": expiry_iso,
     }
 
@@ -198,6 +211,26 @@ async def get_file_metadata(doc_id: str, token_data: dict) -> tuple[dict, dict]:
     _require_google()
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _get_file_meta_sync, doc_id, token_data)
+
+
+def _create_doc_sync(title: str, token_data: dict) -> tuple[str, str, dict]:
+    """Create a blank Google Doc. Returns (doc_id, web_view_url, updated_token_data)."""
+    creds = _prepare_creds(token_data)
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    created = drive.files().create(
+        body={"name": title, "mimeType": _GOOGLE_DOC_MIME},
+        fields="id, webViewLink",
+    ).execute()
+    doc_id = created["id"]
+    url = created.get("webViewLink") or f"https://docs.google.com/document/d/{doc_id}/edit"
+    return doc_id, url, _creds_to_dict(creds)
+
+
+async def create_document(title: str, token_data: dict) -> tuple[str, str, dict]:
+    """Create a Google Doc titled ``title``. Returns (doc_id, url, updated_token_data)."""
+    _require_google()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _create_doc_sync, title, token_data)
 
 
 def _fetch_sync(doc_id: str, token_data: dict, meta: Optional[dict] = None) -> tuple[str, dict]:

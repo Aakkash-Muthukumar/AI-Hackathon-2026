@@ -12,13 +12,12 @@
  *   PAUSE_MS 2000  quiet period before checking X
  */
 import type { PlasmoCSConfig } from "plasmo"
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from "react"
 import { createRoot } from "react-dom/client"
-import { RequirementBars } from "../components/RequirementBars"
-import { ScaffoldLogo, BRAND } from "../components/ScaffoldLogo"
 import { ScaffoldLoader } from "../components/ScaffoldLoader"
-import { reqColorAt } from "../lib/reqColors"
-import { RefreshCw, ChevronLeft, ChevronRight, Link2, LogOut } from "lucide-react"
+import { MarkIcon, RefreshIcon, CloseIcon, LogOutIcon, LinkIcon } from "../components/MarkIcon"
+import { reqColorAt, reqGradientAt, PROGRESS_GRADIENT, PROGRESS_BLUE } from "../lib/reqColors"
+import { GDOCS_SIDEBAR_CSS } from "../styles/gdocs-sidebar.css"
 
 export const config: PlasmoCSConfig = {
   matches: ["https://docs.google.com/document/*"],
@@ -143,6 +142,10 @@ interface EvalResult {
 
 type BarEntry = [string, { name?: string; score: number; missing: string[] }]
 
+function rowDelay(i: number): CSSProperties {
+  return { transitionDelay: `${0.1 + i * 0.08}s` }
+}
+
 function CollapsedBottomBar({
   entries,
   overall,
@@ -159,86 +162,53 @@ function CollapsedBottomBar({
 
   return (
     <div
+      className={`scaffold-bottom-bar${expanded ? " expanded" : ""}`}
       onClick={onExpand}
       title={`Overall: ${overall.toFixed(0)}% — click to expand`}
-      style={{
-        position: "fixed",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: expanded ? 44 : 12,
-        background: "transparent",
-        cursor: "pointer",
-        zIndex: 999999,
-        overflow: "visible",
-        transition: "height 0.2s ease",
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onExpand()
+        }
       }}
     >
-      <div
-        style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 12,
-          background: "#e5e7eb",
-          display: "flex",
-          alignItems: "flex-end",
-          overflow: "visible",
-        }}
-      >
+      <div className="scaffold-bottom-inner">
         {entries.length === 0 || overall <= 0 ? (
-          <div style={{ width: `${Math.min(100, overall)}%`, height: "100%", background: "#93c5fd" }} />
+          <div
+            className="scaffold-bottom-fill"
+            style={{ width: `${Math.min(100, overall)}%`, background: PROGRESS_GRADIENT }}
+          />
         ) : (
           <div
-            style={{
-              width: `${Math.min(100, Math.max(0, overall))}%`,
-              height: "100%",
-              display: "flex",
-              alignItems: "flex-end",
-              transition: "width 0.5s ease",
-            }}
+            className="scaffold-bottom-fill"
+            style={{ width: `${Math.min(100, Math.max(0, overall))}%` }}
           >
             {entries.map(([id, req], i) => {
-              const share = totalScore > 0 ? (Math.max(0, req.score) / totalScore) * 100 : 100 / entries.length
+              const share =
+                totalScore > 0
+                  ? (Math.max(0, req.score) / totalScore) * 100
+                  : 100 / entries.length
               const label = req.name ?? id
               const isHovered = hoveredIdx === i
               return (
                 <div
                   key={id}
-                  onMouseEnter={(e) => { e.stopPropagation(); setHoveredIdx(i) }}
+                  className={`scaffold-bottom-seg${isHovered ? " hovered" : ""}`}
+                  onMouseEnter={(e) => {
+                    e.stopPropagation()
+                    setHoveredIdx(i)
+                  }}
                   onMouseLeave={() => setHoveredIdx(null)}
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     width: isHovered ? `calc(${share}% + 16px)` : `${share}%`,
-                    height: isHovered ? 22 : 12,
                     background: reqColorAt(i),
-                    transition: "width 0.18s ease, height 0.18s ease",
-                    position: "relative",
-                    flexShrink: 0,
-                    borderRadius: isHovered ? "4px 4px 0 0" : 0,
                   }}
                 >
                   {isHovered && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: "100%",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        marginBottom: 6,
-                        padding: "5px 10px",
-                        background: "#1e293b",
-                        color: "#fff",
-                        fontSize: 11,
-                        fontWeight: 500,
-                        borderRadius: 6,
-                        whiteSpace: "nowrap",
-                        pointerEvents: "none",
-                        boxShadow: "0 2px 10px rgba(0,0,0,0.18)",
-                        zIndex: 1,
-                      }}
-                    >
+                    <div className="scaffold-bottom-tip">
                       {label} · {req.score.toFixed(0)}%
                     </div>
                   )}
@@ -255,7 +225,7 @@ function CollapsedBottomBar({
 // ── React component ───────────────────────────────────────────────────────────
 
 function GDocsTrackerSidebar() {
-  const [collapsed, setCollapsed] = useState(true)
+  const [open, setOpen] = useState(false)
   const [authorized, setAuthorized] = useState<boolean | null>(null)
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -270,11 +240,9 @@ function GDocsTrackerSidebar() {
   const evalSequence = useRef(0)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
   const [docId, setDocId] = useState(getDocId)
+  const [refreshSpin, setRefreshSpin] = useState(false)
 
-  // Adjust page margin so content isn't hidden behind the sidebar
-  useEffect(() => {
-    document.body.style.marginRight = collapsed ? "0" : "300px"
-  }, [collapsed])
+  // Sidebar slides over the doc — no page margin shift
 
   // Detect navigation to a different Google Doc in the same tab
   useEffect(() => {
@@ -457,234 +425,248 @@ function GDocsTrackerSidebar() {
   }
 
   function handleRefresh() {
+    setRefreshSpin(true)
+    window.setTimeout(() => setRefreshSpin(false), 600)
     loadAssignments(docId)
     runEval({ force: true })
   }
 
-  // ── Collapsed: Apple-style stacked total bar + expand tab ───────────────────
+  const overall = scores?.overall ?? 0
+  const reqEntries: BarEntry[] = scores ? Object.entries(scores.requirements) : []
+  const totalScore = reqEntries.reduce((s, [, r]) => s + Math.max(0, r.score), 0)
+  const showBottomBar = !open && authorized && selectedId && reqEntries.length > 0 && !scores?.unavailable_reason
 
-  if (collapsed) {
-    const entries = scores ? Object.entries(scores.requirements) : []
-    const overall = scores?.overall ?? 0
-    const totalScore = entries.reduce((s, [, r]) => s + Math.max(0, r.score), 0)
-
-    return (
-      <>
-        {/* Right-edge tab — easy to find and click */}
-        <button
-          onClick={() => setCollapsed(false)}
-          title="Expand Scaffold"
-          style={{
-            position: "fixed",
-            right: 0,
-            top: "50%",
-            transform: "translateY(-50%)",
-            background: BRAND[500],
-            color: "#fff",
-            borderRadius: "8px 0 0 8px",
-            padding: "10px 6px",
-            border: "none",
-            cursor: "pointer",
-            zIndex: 999999,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 4,
-            boxShadow: "-2px 0 8px rgba(0,0,0,0.15)",
-          }}
-        >
-          <ScaffoldLogo variant="mark" height={18} color="#ffffff" />
-          <ChevronLeft size={12} />
-        </button>
-
-        <CollapsedBottomBar
-          entries={entries}
-          overall={overall}
-          totalScore={totalScore}
-          onExpand={() => setCollapsed(false)}
-        />
-      </>
-    )
-  }
-
-  // ── Main sidebar ────────────────────────────────────────────────────────────
+  const footText = evaluating
+    ? "Evaluating…"
+    : lastUpdatedAt
+    ? `Updated ${new Date(lastUpdatedAt).toLocaleTimeString()}`
+    : scores
+    ? "Up to date"
+    : "Waiting for activity"
 
   return (
-    <div
-      style={{
-        position: "fixed", right: 0, top: 0, height: "100vh", width: 300,
-        background: "#fff", borderLeft: "1px solid #e5e7eb",
-        boxShadow: "-4px 0 16px rgba(0,0,0,0.08)",
-        display: "flex", flexDirection: "column", zIndex: 999999,
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-        fontSize: 13,
-      }}
-    >
-      {/* Header */}
-      <div style={{
-        padding: "12px 14px", borderBottom: "1px solid #e5e7eb",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: BRAND[500],
-      }}>
-        <ScaffoldLogo variant="full" height={20} color="#ffffff" />
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <button
-            onClick={handleRefresh}
-            disabled={evaluating}
-            title="Refresh assignments & evaluate"
-            style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
-          >
-            {evaluating ? (
-              <ScaffoldLoader width={16} theme="dark" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-          </button>
-          <button
-            onClick={() => setCollapsed(true)}
-            style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
-          >
-            <ChevronRight size={14} />
-          </button>
-        </div>
-      </div>
+    <div className={`scaffold-root${open ? " scaffold-open" : ""}`}>
+      <style>{GDOCS_SIDEBAR_CSS}</style>
 
-      {/* Assignment selector — always shown; user must pick before eval runs */}
-      {authorized && assignments.length > 0 && (
-        <select
-          value={selectedId ?? ""}
-          onChange={(e) => handleAssignmentChange(e.target.value)}
-          style={{
-            margin: "10px 12px 0", padding: "6px 8px", borderRadius: 8,
-            border: "1px solid #e5e7eb", fontSize: 12, color: "#374151",
-          }}
-        >
-          <option value="" disabled>
-            Select assignment…
-          </option>
-          {assignments.map((a) => (
-            <option key={a.id} value={a.id}>{a.title}</option>
-          ))}
-        </select>
-      )}
-
-      {/* Body */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px" }}>
-        {authorized === null && (
-          <div style={{ marginTop: 40, display: "flex", justifyContent: "center" }}>
-            <ScaffoldLoader width={48} label="Checking…" />
+      {/* Collapsed launcher tab */}
+      <button
+        type="button"
+        className="scaffold-launcher"
+        aria-label="Open Scaffold panel"
+        onClick={() => setOpen(true)}
+      >
+        <MarkIcon />
+        <span className="sf-word">scaffold</span>
+        {overall > 0 && (
+          <div className="sf-launch-cov" aria-hidden="true">
+            <div
+              className="sf-launch-cov-fill"
+              style={{ width: `${Math.min(100, overall)}%`, background: PROGRESS_GRADIENT }}
+            />
           </div>
         )}
+      </button>
 
-        {authorized === false && (
-          <div style={{ textAlign: "center", marginTop: 40 }}>
-            <p style={{ color: "#374151", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
-              Connect your Google account so Scaffold can read your document.
-            </p>
+      {showBottomBar && (
+        <CollapsedBottomBar
+          entries={reqEntries}
+          overall={overall}
+          totalScore={totalScore}
+          onExpand={() => setOpen(true)}
+        />
+      )}
+
+      {/* Slide-in sidebar */}
+      <aside className="scaffold-sidebar" aria-label="Scaffold">
+        <div className="sf-head">
+          <div className="sf-logo">
+            <MarkIcon width={17} height={20} />
+            scaffold
+          </div>
+          <div className="sf-actions">
             <button
-              onClick={openAuthTab}
-              disabled={authPolling}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "9px 16px", borderRadius: 8, border: "none",
-                background: BRAND[500], color: "#fff", fontSize: 13, fontWeight: 600,
-                cursor: authPolling ? "wait" : "pointer",
-              }}
+              type="button"
+              className="sf-iconbtn"
+              aria-label="Re-evaluate"
+              disabled={evaluating}
+              onClick={handleRefresh}
             >
-              <Link2 size={14} />
-              {authPolling ? "Waiting for authorization…" : "Connect Google account"}
+              {evaluating ? (
+                <ScaffoldLoader width={18} theme="dark" />
+              ) : (
+                <span className={refreshSpin ? "sf-spin" : undefined} style={{ display: "flex" }}>
+                  <RefreshIcon />
+                </span>
+              )}
             </button>
-            {error && (
-              <p style={{ color: "#ef4444", fontSize: 11, marginTop: 12 }}>{error}</p>
-            )}
+            <button
+              type="button"
+              className="sf-iconbtn"
+              aria-label="Close panel"
+              onClick={() => setOpen(false)}
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        </div>
+
+        <div className="sf-body">
+          {authorized === null && (
+            <div className="sf-center sf-row" style={rowDelay(0)}>
+              <ScaffoldLoader width={52} label="Checking…" />
+            </div>
+          )}
+
+          {authorized === false && (
+            <div className="sf-row" style={rowDelay(0)}>
+              <p className="sf-msg">
+                Connect your Google account so Scaffold can read your document.
+              </p>
+              <div style={{ textAlign: "center" }}>
+                <button
+                  type="button"
+                  className="sf-auth-btn"
+                  onClick={openAuthTab}
+                  disabled={authPolling}
+                >
+                  <LinkIcon />
+                  {authPolling ? "Waiting for authorization…" : "Connect Google account"}
+                </button>
+              </div>
+              {error && <p className="sf-err" style={{ textAlign: "center", marginTop: 12 }}>{error}</p>}
+            </div>
+          )}
+
+          {authorized && assignments.length > 0 && (
+            <div className="sf-sel-wrap sf-row" style={rowDelay(0)}>
+              <select
+                className="sf-sel"
+                value={selectedId ?? ""}
+                onChange={(e) => handleAssignmentChange(e.target.value)}
+              >
+                <option value="" disabled>Select assignment…</option>
+                {assignments.map((a) => (
+                  <option key={a.id} value={a.id}>{a.title}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {authorized && assignments.length > 0 && !selectedId && (
+            <p className="sf-msg sf-row" style={rowDelay(1)}>
+              Select an assignment above to start tracking this document.
+            </p>
+          )}
+
+          {authorized && assignments.length === 0 && (
+            <p className="sf-msg sf-row" style={rowDelay(0)}>
+              No assignments found.
+              <br />
+              <a href="http://localhost:3000" target="_blank" rel="noreferrer">
+                Open the dashboard
+              </a>{" "}
+              once to sync your account, then click refresh above.
+            </p>
+          )}
+
+          {authorized && selectedId && (
+            <>
+              {evaluating && !scores && (
+                <div className="sf-center sf-row" style={rowDelay(1)}>
+                  <ScaffoldLoader width={52} label="Evaluating…" />
+                </div>
+              )}
+
+              {error && <p className="sf-err sf-row" style={rowDelay(1)}>{error}</p>}
+
+              {scores?.unavailable_reason === "not_found" && (
+                <div className="sf-warn sf-row" style={rowDelay(1)}>
+                  <strong>Can&apos;t read this document.</strong>
+                  <br />
+                  Make sure it&apos;s open in the signed-in Google account and has been saved at least once.
+                </div>
+              )}
+
+              {scores && !scores.unavailable_reason && reqEntries.length > 0 && (
+                <>
+                  <div className="sf-row" style={rowDelay(1)}>
+                    <div className="sf-cov-top">
+                      <span className="sf-lbl">Overall coverage</span>
+                      <span className="sf-cov-pct" style={{ color: PROGRESS_BLUE }}>
+                        {overall.toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="sf-cov-bar">
+                      <div
+                        className="sf-cov-fill"
+                        style={{ "--cov": `${Math.min(100, Math.max(0, overall))}%` } as CSSProperties}
+                      >
+                        {reqEntries.map(([id, req], i) => {
+                          const share =
+                            totalScore > 0
+                              ? (Math.max(0, req.score) / totalScore) * 100
+                              : 100 / reqEntries.length
+                          return (
+                            <div
+                              key={id}
+                              className="sf-cov-seg"
+                              style={{ width: `${share}%`, background: reqColorAt(i) }}
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="sf-lbl sf-row" style={{ ...rowDelay(2), display: "block", margin: "0 0 12px" }}>
+                    Requirements
+                  </div>
+
+                  {reqEntries.map(([id, req], i) => {
+                    const pct = Math.min(100, Math.max(0, req.score))
+                    const label = req.name ?? id
+                    const color = reqColorAt(i)
+                    return (
+                      <div key={id} className="sf-req sf-row" style={rowDelay(3 + i)}>
+                        <div className="sf-req-top">
+                          <span className="sf-req-name">
+                            <span className="sf-dot" style={{ background: color }} />
+                            <span>{label}</span>
+                          </span>
+                          <span className="sf-req-pct" style={{ color }}>{pct.toFixed(0)}%</span>
+                        </div>
+                        <div className="sf-req-bar">
+                          <div
+                            className="sf-req-bf"
+                            style={{ "--w": `${pct}%`, background: reqGradientAt(i) } as CSSProperties}
+                          />
+                        </div>
+                        {req.missing.slice(0, 4).map((m, j) => (
+                          <div key={j} className="sf-bul">{m}</div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        {authorized && (
+          <div className="sf-foot">
+            <span>{footText}</span>
+            <button
+              type="button"
+              className="sf-foot-btn"
+              title="Disconnect Google"
+              onClick={disconnectGoogle}
+            >
+              <LogOutIcon />
+            </button>
           </div>
         )}
-
-        {authorized && assignments.length > 0 && !selectedId && (
-          <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40, lineHeight: 1.6 }}>
-            Select an assignment above to start tracking this document.
-          </p>
-        )}
-
-        {authorized && assignments.length === 0 && (
-          <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40, lineHeight: 1.6 }}>
-            No assignments found.
-            <br />
-            <a
-              href="http://localhost:3000"
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: BRAND[500] }}
-            >
-              Open the dashboard
-            </a>{" "}
-            once to sync your account, then click refresh above.
-          </p>
-        )}
-
-        {authorized && selectedId && (
-          <>
-            {evaluating && !scores && (
-              <div style={{ marginTop: 40, display: "flex", justifyContent: "center" }}>
-                <ScaffoldLoader width={52} label="Evaluating…" />
-              </div>
-            )}
-            {error && (
-              <p style={{ color: "#ef4444", fontSize: 11, marginBottom: 10 }}>{error}</p>
-            )}
-            {scores?.unavailable_reason === "not_found" && (
-              <div
-                style={{
-                  marginTop: 20,
-                  padding: "12px 14px",
-                  borderRadius: 10,
-                  background: "#fef9c3",
-                  border: "1px solid #fde047",
-                  fontSize: 12,
-                  color: "#713f12",
-                  lineHeight: 1.6,
-                }}
-              >
-                <strong>Can't read this document.</strong>
-                <br />
-                Make sure it's open in the signed-in Google account and has been saved at least once. If it's brand new, type a few characters to save it first.
-              </div>
-            )}
-            {scores && !scores.unavailable_reason && (
-              <RequirementBars
-                key={lastUpdatedAt ?? 0}
-                requirements={scores.requirements}
-                overall={scores.overall}
-              />
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Footer — Google account status */}
-      {authorized && (
-        <div style={{
-          padding: "8px 14px", borderTop: "1px solid #f3f4f6",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>
-            {evaluating
-              ? "Evaluating…"
-              : lastUpdatedAt
-              ? `Updated ${new Date(lastUpdatedAt).toLocaleTimeString()}`
-              : scores
-              ? "Up to date"
-              : "Waiting for activity"}
-          </span>
-          <button
-            onClick={disconnectGoogle}
-            title="Disconnect Google"
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: "#d1d5db" }}
-          >
-            <LogOut size={12} />
-          </button>
-        </div>
-      )}
+      </aside>
     </div>
   )
 }

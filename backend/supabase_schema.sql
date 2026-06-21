@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS public.assignments (
     tasks               JSONB       NOT NULL DEFAULT '[]'::JSONB,
     overall_completion  DOUBLE PRECISION NOT NULL DEFAULT 0,
     document_url        TEXT,
+    guidance_level      TEXT        NOT NULL DEFAULT 'medium',
+    status              TEXT        NOT NULL DEFAULT 'active',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -39,3 +41,7 @@ CREATE TABLE IF NOT EXISTS public.doc_evaluations (
 
 CREATE INDEX IF NOT EXISTS doc_eval_assignment_idx ON public.doc_evaluations (assignment_id);
 ALTER TABLE public.doc_evaluations ENABLE ROW LEVEL SECURITY;
+
+-- Migration for existing deployments:
+-- ALTER TABLE public.assignments ADD COLUMN IF NOT EXISTS guidance_level TEXT NOT NULL DEFAULT 'medium';
+-- ALTER TABLE public.assignments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';

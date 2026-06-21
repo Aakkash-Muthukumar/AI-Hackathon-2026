@@ -1,13 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { AssignmentSource, RubricItem, SOURCE_LABELS } from "@/lib/types";
+import {
+  AssignmentSource,
+  RubricItem,
+  SOURCE_LABELS,
+  GuidanceLevel,
+  GUIDANCE_LABELS,
+  GUIDANCE_TASK_HINT,
+} from "@/lib/types";
+import { getUserId } from "@/lib/userId";
 import { Header } from "@/components/Header";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Link2, CheckCircle2 } from "lucide-react";
 import { ScaffoldLoader } from "@/components/ScaffoldLoader";
+import clsx from "clsx";
 
 const SELECTABLE_SOURCES: AssignmentSource[] = [
   "manual",
@@ -15,6 +24,8 @@ const SELECTABLE_SOURCES: AssignmentSource[] = [
   "notion",
   "google_classroom",
 ];
+
+const GUIDANCE_OPTIONS: GuidanceLevel[] = ["low", "medium", "high"];
 
 interface DraftRubricItem {
   criterion: string;
@@ -24,15 +35,21 @@ interface DraftRubricItem {
 
 export default function NewAssignment() {
   const router = useRouter();
+  const userId = getUserId();
 
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [source, setSource] = useState<AssignmentSource>("manual");
   const [deadline, setDeadline] = useState("");
-  const [documentUrl, setDocumentUrl] = useState("");
+  const [guidanceLevel, setGuidanceLevel] = useState<GuidanceLevel>("medium");
   const [rubric, setRubric] = useState<DraftRubricItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api.google.status(userId).then((r) => setGoogleConnected(r.authorized)).catch(() => setGoogleConnected(false));
+  }, [userId]);
 
   function updateRubric(index: number, patch: Partial<DraftRubricItem>) {
     setRubric((prev) =>
@@ -69,8 +86,8 @@ export default function NewAssignment() {
         title: title.trim(),
         prompt: prompt.trim(),
         source,
+        guidance_level: guidanceLevel,
         ...(deadline ? { deadline: new Date(deadline).toISOString() } : {}),
-        ...(documentUrl.trim() ? { document_url: documentUrl.trim() } : {}),
         rubric: cleanRubric,
       });
 
@@ -96,7 +113,8 @@ export default function NewAssignment() {
 
         <h1 className="text-2xl font-bold text-gray-900 mb-1">New assignment</h1>
         <p className="text-sm text-gray-500 mb-8">
-          Add the prompt and rubric — Claude will break it into trackable tasks.
+          Add the prompt and rubric — Claude will break it into trackable tasks. A Google Doc
+          is created automatically when your Google account is connected.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -117,6 +135,32 @@ export default function NewAssignment() {
               placeholder="Paste the full assignment instructions here…"
               className="input h-40 resize-y leading-relaxed"
             />
+          </Field>
+
+          <Field label="Guidance level" hint="Controls how many tasks the extension tracks">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {GUIDANCE_OPTIONS.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => setGuidanceLevel(level)}
+                  className={clsx(
+                    "rounded-xl border px-4 py-3 text-left transition-colors",
+                    guidanceLevel === level
+                      ? "border-scaffold-500 bg-scaffold-50 ring-2 ring-scaffold-500"
+                      : "border-gray-200 bg-white hover:border-scaffold-300"
+                  )}
+                >
+                  <span className="block text-sm font-semibold text-gray-900 capitalize">
+                    {level}
+                  </span>
+                  <span className="block text-xs text-gray-500 mt-1">
+                    {GUIDANCE_TASK_HINT[level]}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">{GUIDANCE_LABELS[guidanceLevel]}</p>
           </Field>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -144,15 +188,40 @@ export default function NewAssignment() {
             </Field>
           </div>
 
-          <Field label="Document URL">
-            <input
-              type="url"
-              value={documentUrl}
-              onChange={(e) => setDocumentUrl(e.target.value)}
-              placeholder="https://docs.google.com/document/…"
-              className="input"
-            />
-          </Field>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Google Doc</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  A blank doc titled with your assignment name will be created in your Drive.
+                </p>
+              </div>
+              {googleConnected === null ? (
+                <ScaffoldLoader width={22} className="!gap-0 shrink-0" />
+              ) : googleConnected ? (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 shrink-0">
+                  <CheckCircle2 size={14} />
+                  Connected
+                </span>
+              ) : (
+                <a
+                  href={api.google.authorizeUrl(userId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-scaffold-500 rounded-lg hover:bg-scaffold-600 shrink-0"
+                >
+                  <Link2 size={13} />
+                  Connect Google
+                </a>
+              )}
+            </div>
+            {googleConnected === false && (
+              <p className="text-xs text-amber-700 mt-3">
+                Connect Google before creating to auto-generate the doc. You can still create
+                without it and link a doc later.
+              </p>
+            )}
+          </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -233,7 +302,7 @@ export default function NewAssignment() {
               className="inline-flex items-center gap-2 px-5 py-2.5 bg-scaffold-500 text-white text-sm font-medium rounded-lg hover:bg-scaffold-600 transition-colors disabled:opacity-60"
             >
               {submitting && <ScaffoldLoader width={20} className="!gap-0" />}
-              {submitting ? "Analyzing rubric…" : "Create assignment"}
+              {submitting ? "Creating…" : "Create assignment"}
             </button>
             <Link
               href="/"
@@ -251,10 +320,12 @@ export default function NewAssignment() {
 function Field({
   label,
   required = false,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -262,6 +333,9 @@ function Field({
       <label className="block text-sm font-medium text-gray-700 mb-1.5">
         {label}
         {required && <span className="text-red-500 ml-0.5">*</span>}
+        {hint && (
+          <span className="block text-xs font-normal text-gray-400 mt-0.5">{hint}</span>
+        )}
       </label>
       {children}
     </div>

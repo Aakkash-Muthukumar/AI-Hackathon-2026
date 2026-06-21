@@ -2,6 +2,7 @@ import { Assignment } from "./types";
 import { getUserId } from "./userId";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+const BACKEND_ROOT = BASE.replace(/\/api\/?$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const userId = getUserId();
@@ -17,14 +18,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const err = await res.text().catch(() => res.statusText);
     throw new Error(`API ${path} → ${res.status}: ${err}`);
   }
-  return res.json() as Promise<T>;
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 export const api = {
   assignments: {
     list: () => request<Assignment[]>("/assignments/"),
 
-    get: (id: string) => request<Assignment>(`/assignments/${id}`),
+    get: (id: string, fresh = false) =>
+      request<Assignment>(`/assignments/${id}${fresh ? "?fresh=true" : ""}`),
 
     create: (body: {
       title: string;
@@ -33,6 +42,7 @@ export const api = {
       deadline?: string;
       rubric?: unknown[];
       document_url?: string;
+      guidance_level?: string;
     }) =>
       request<Assignment>("/assignments/", {
         method: "POST",
@@ -55,6 +65,9 @@ export const api = {
 
     delete: (id: string) =>
       request<void>(`/assignments/${id}`, { method: "DELETE" }),
+
+    complete: (id: string) =>
+      request<Assignment>(`/assignments/${id}/complete`, { method: "POST" }),
   },
 
   discovery: {
@@ -100,5 +113,18 @@ export const api = {
       request<{ platforms: { id: string; name: string; status: string }[] }>(
         "/discovery/supported"
       ),
+  },
+
+  google: {
+    status: (userId: string) =>
+      fetch(`${BACKEND_ROOT}/auth/google/status?user_id=${encodeURIComponent(userId)}`).then(
+        async (res) => {
+          if (!res.ok) throw new Error("Could not check Google connection");
+          return res.json() as Promise<{ authorized: boolean }>;
+        }
+      ),
+
+    authorizeUrl: (userId: string) =>
+      `${BACKEND_ROOT}/auth/google/authorize?user_id=${encodeURIComponent(userId)}`,
   },
 };

@@ -1,4 +1,4 @@
-import { reqColorAt } from "../lib/reqColors"
+import { reqColorAt, reqGradientAt } from "../lib/reqColors"
 
 interface ReqScore {
   name?: string
@@ -135,7 +135,7 @@ export function RequirementBars({ requirements, overall }: Props) {
                     style={{
                       height: "100%",
                       borderRadius: 99,
-                      background: color,
+                      background: reqGradientAt(i),
                       width: `${pct}%`,
                       transition: "width 0.5s ease",
                     }}

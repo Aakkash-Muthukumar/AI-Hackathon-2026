@@ -44,6 +44,15 @@ export function TaskList({ tasks, compact = false }: Props) {
             </span>
           </div>
           <ProgressBar value={task.completion} size="sm" showLabel={false} />
+          {task.missing_requirements.length > 0 && !compact && (
+            <ul className="mt-1 space-y-0.5 pl-5">
+              {task.missing_requirements.slice(0, 3).map((m, i) => (
+                <li key={i} className="text-xs text-amber-700 list-disc">
+                  {m}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ))}
 

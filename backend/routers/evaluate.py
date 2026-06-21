@@ -2,9 +2,27 @@ import logging
 from fastapi import APIRouter, HTTPException
 from models.schemas import EvaluateRequest, EvaluateResponse, Assignment
 from services import redis_service, google_service, claude_service, supabase_service
+from services.assignment_sync import apply_eval_to_assignment, serialize_assignment
 
 router = APIRouter(prefix="/evaluate", tags=["evaluate"])
 logger = logging.getLogger(__name__)
+
+
+async def _persist_eval_scores(assignment: Assignment, result: dict) -> None:
+    """Write per-task scores and overall completion to Supabase + Redis."""
+    assignment = apply_eval_to_assignment(assignment, result)
+    tasks_json = [t.model_dump(mode="json") for t in assignment.tasks]
+    try:
+        await supabase_service.update_assignment_progress(
+            assignment.id, tasks_json, assignment.overall_completion
+        )
+    except Exception as exc:
+        logger.warning("Task progress update failed, trying full upsert: %s", exc)
+        data = serialize_assignment(assignment)
+        await supabase_service.upsert_assignment(data)
+
+    data = serialize_assignment(assignment)
+    await redis_service.cache_assignment(assignment.id, data)
 
 
 async def _load_assignment(assignment_id: str) -> Assignment:
@@ -16,6 +34,18 @@ async def _load_assignment(assignment_id: str) -> Assignment:
         raise HTTPException(404, "Assignment not found — create it in the dashboard first")
     await redis_service.cache_assignment(assignment_id, row)
     return Assignment(**row)
+
+
+async def _sync_eval_to_assignment(assignment_id: str, eval_data: dict) -> None:
+    """Ensure dashboard tasks reflect a cached or fresh eval result."""
+    try:
+        row = await supabase_service.get_assignment(assignment_id)
+        if not row:
+            return
+        assignment = Assignment(**row)
+        await _persist_eval_scores(assignment, eval_data)
+    except Exception as exc:
+        logger.warning("Could not sync eval scores to assignment %s: %s", assignment_id, exc)
 
 
 @router.post("/", response_model=EvaluateResponse)
@@ -66,7 +96,10 @@ async def evaluate(body: EvaluateRequest):
         # 3a. Redis fast cache (120-s TTL)
         cached = await redis_service.get_cached_eval_result(body.doc_id, body.assignment_id)
         if cached and cached.get("modified_time") == modified_time and cached.get("result"):
-            return EvaluateResponse(**cached["result"])
+            result = dict(cached["result"])
+            result["assignment_id"] = body.assignment_id
+            await _sync_eval_to_assignment(body.assignment_id, result)
+            return EvaluateResponse(**result)
 
         # 3b. Supabase persistent cache — avoids Claude call when the doc hasn't changed
         stored = await supabase_service.get_doc_evaluation(body.doc_id, body.assignment_id)
@@ -76,6 +109,7 @@ async def evaluate(body: EvaluateRequest):
             await redis_service.cache_eval_result(
                 body.doc_id, body.assignment_id, eval_data, modified_time
             )
+            await _sync_eval_to_assignment(body.assignment_id, eval_data)
             return EvaluateResponse(**eval_data)
     else:
         logger.info(
@@ -123,24 +157,27 @@ async def evaluate(body: EvaluateRequest):
             {t.id: {"name": t.title, "score": 0, "missing": []} for t in assignment.tasks}
             if assignment.tasks else {}
         )
-        return EvaluateResponse(
-            requirements=zero_reqs,
-            overall=0.0,
-            assignment_id=body.assignment_id,
-        )
+        zero_result = {
+            "requirements": zero_reqs,
+            "overall": 0.0,
+            "assignment_id": body.assignment_id,
+        }
+        try:
+            await _persist_eval_scores(assignment, zero_result)
+        except Exception as exc:
+            logger.warning("Could not persist zero scores: %s", exc)
+        return EvaluateResponse(**zero_result)
 
     # 6. Score with Claude (prompt caching applied inside claude_service)
     result = await claude_service.score_requirements(assignment, doc_text)
     result["assignment_id"] = body.assignment_id
 
-    # 7. Persist — Supabase for long-term, Redis for fast reads
+    # 7. Persist — Supabase for long-term, Redis for fast reads + dashboard task sync
     try:
         await supabase_service.upsert_doc_evaluation(
             body.doc_id, body.assignment_id, result, modified_time
         )
-        await supabase_service.update_assignment_completion(
-            body.assignment_id, result.get("overall", 0)
-        )
+        await _persist_eval_scores(assignment, result)
     except Exception as exc:
         logger.warning("Could not persist eval to Supabase: %s", exc)
 

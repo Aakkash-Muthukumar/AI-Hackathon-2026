@@ -1,12 +1,29 @@
 import anthropic
 import json
+import logging
 import sentry_sdk
-from typing import List
-from models.schemas import Assignment, Task
+from typing import List, Any
+from models.schemas import Assignment, Task, GuidanceLevel
 
 client = anthropic.Anthropic()
+logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-4-6"
+
+_GUIDANCE_HINTS = {
+    GuidanceLevel.LOW: (
+        "Guidance: LOW — keep the breakdown minimal. Only split into separate tasks when "
+        "the assignment clearly has distinct major parts. Prefer fewer, broader milestones."
+    ),
+    GuidanceLevel.MEDIUM: (
+        "Guidance: MEDIUM — balanced breakdown. Cover every major rubric area with a "
+        "sensible number of tasks; split only where it helps the student track progress."
+    ),
+    GuidanceLevel.HIGH: (
+        "Guidance: HIGH — thorough breakdown. Split complex requirements into granular, "
+        "trackable steps wherever the assignment complexity warrants it."
+    ),
+}
 
 _RUBRIC_SYSTEM = """You are an expert academic assignment analyzer.
 Given an assignment prompt and rubric, break the work into measurable, trackable subtasks.
@@ -28,6 +45,62 @@ def _strip_fences(raw: str) -> str:
             lines = lines[:-1]
         raw = "\n".join(lines).strip()
     return raw
+
+
+def _parse_json(raw: str) -> Any:
+    """Parse Claude JSON output, salvaging truncated arrays when possible."""
+    text = _strip_fences(raw)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Salvage a truncated JSON array by closing after the last complete object.
+    start = text.find("[")
+    if start != -1:
+        fragment = text[start:]
+        last_obj = fragment.rfind("}")
+        if last_obj != -1:
+            try:
+                return json.loads(fragment[: last_obj + 1] + "]")
+            except json.JSONDecodeError:
+                pass
+
+    # Salvage a truncated JSON object similarly.
+    start = text.find("{")
+    if start != -1:
+        fragment = text[start:]
+        depth = 0
+        end = -1
+        for i, ch in enumerate(fragment):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+        if end != -1:
+            try:
+                return json.loads(fragment[: end + 1])
+            except json.JSONDecodeError:
+                pass
+
+    raise json.JSONDecodeError("Could not parse Claude JSON response", text, 0)
+
+
+def _normalize_task(raw: dict, index: int) -> dict:
+    """Ensure required Task fields exist with sane defaults."""
+    task = dict(raw)
+    task.setdefault("id", f"task_{index + 1}")
+    task.setdefault("title", f"Requirement {index + 1}")
+    task.setdefault("completion", 0)
+    for key in ("success_criteria", "expected_outputs", "rubric_alignment", "missing_requirements"):
+        val = task.get(key)
+        if val is None:
+            task[key] = []
+        elif isinstance(val, str):
+            task[key] = [val]
+    return task
 
 
 def _call_claude(
@@ -75,28 +148,72 @@ def _call_claude(
 
 async def analyze_assignment(assignment: Assignment) -> List[Task]:
     """Break an assignment into measurable tasks using its prompt and rubric."""
+    rubric_payload = [r.model_dump() for r in assignment.rubric]
+    rubric_json = json.dumps(rubric_payload, indent=2)
+    if len(rubric_json) > 6000:
+        rubric_json = rubric_json[:6000] + "\n...(rubric truncated for analysis)"
+
+    guidance_hint = _GUIDANCE_HINTS.get(
+        assignment.guidance_level, _GUIDANCE_HINTS[GuidanceLevel.MEDIUM]
+    )
+
     prompt = f"""Assignment Title: {assignment.title}
 
-Prompt: {assignment.prompt}
+Prompt:
+{assignment.prompt[:4000]}
 
 Rubric:
-{json.dumps([r.model_dump() for r in assignment.rubric], indent=2)}
+{rubric_json}
 
-Return a JSON array. Each element:
+{guidance_hint}
+
+Decide the number of tasks subjectively based on the assignment complexity and guidance level above.
+Do not pad with extra tasks — each task must map to something real in the prompt or rubric.
+Keep every string under 80 characters. Each task needs only 2-3 short success_criteria bullets.
+
+Each element:
 {{
-  "id": "task_N",
+  "id": "task_1",
   "title": "Short task name",
   "completion": 0,
-  "success_criteria": ["measurable criterion the text must satisfy"],
+  "success_criteria": ["short measurable criterion"],
   "expected_outputs": ["what the text must contain"],
-  "rubric_alignment": ["which rubric criterion this maps to"],
+  "rubric_alignment": ["rubric criterion name"],
   "missing_requirements": []
-}}"""
+}}
+
+Return ONLY the JSON array — no markdown fences, no commentary."""
+
+    compact_prompt = (
+        prompt
+        + "\n\nIMPORTANT: Response was truncated. Return fewer tasks with VERY short strings."
+    )
 
     with sentry_sdk.start_span(op="ai.pipeline", name="analyze_assignment"):
-        response = _call_claude(_RUBRIC_SYSTEM, prompt, 2048, "rubric_analysis")
-        tasks_data = json.loads(_strip_fences(response.content[0].text))
-        return [Task(**t) for t in tasks_data]
+        response = _call_claude(_RUBRIC_SYSTEM, prompt, 4096, "rubric_analysis")
+        raw_text = response.content[0].text
+
+        if response.stop_reason == "max_tokens":
+            logger.warning("Rubric analysis hit max_tokens — retrying with compact prompt")
+            response = _call_claude(_RUBRIC_SYSTEM, compact_prompt, 4096, "rubric_analysis_compact")
+            raw_text = response.content[0].text
+
+        try:
+            tasks_data = _parse_json(raw_text)
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to parse rubric JSON: %s", exc)
+            sentry_sdk.capture_exception(exc)
+            raise ValueError(
+                "AI returned invalid rubric analysis. Try a shorter prompt/rubric or retry."
+            ) from exc
+
+        if not isinstance(tasks_data, list):
+            raise ValueError("AI rubric analysis did not return a JSON array of tasks.")
+
+        if not tasks_data:
+            raise ValueError("AI returned no tasks for this assignment.")
+
+        return [Task(**_normalize_task(t, i)) for i, t in enumerate(tasks_data)]
 
 
 async def score_requirements(assignment: Assignment, document_text: str) -> dict:
@@ -130,13 +247,13 @@ Prompt:
 Rubric:
 {rubric_text}
 
-Tasks to score:
+Tasks to score (use the exact id string as each JSON key):
 {task_lines}
 
 Return ONLY compact JSON with no prose, no markdown fences:
 {{
   "requirements": {{
-    "<task_id>": {{
+    "<exact task id from list above>": {{
       "name": "<task title exactly as given above>",
       "score": <0-100>,
       "missing": ["short casual gap — 2 to 6 words, plain language, lead with the gap"]
@@ -145,6 +262,8 @@ Return ONLY compact JSON with no prose, no markdown fences:
   }},
   "overall": <0-100>
 }}
+
+CRITICAL: Every task id listed above must appear as a key in "requirements".
 
 Rules for "missing" entries:
 - 2 to 6 words only — fragments, not sentences
@@ -181,7 +300,7 @@ Rules for "missing" entries:
                 span.set_data("ai.responses", [response.content[0].text[:500]])
                 span.set_data("ai.prompt_tokens.used", response.usage.input_tokens)
                 span.set_data("ai.completion_tokens.used", response.usage.output_tokens)
-                result = json.loads(_strip_fences(response.content[0].text))
+                result = _parse_json(response.content[0].text)
                 # Derive overall if not returned
                 if "overall" not in result and result.get("requirements"):
                     scores = [v.get("score", 0) for v in result["requirements"].values()]
@@ -213,5 +332,5 @@ Return the same JSON array with updated:
 
     with sentry_sdk.start_span(op="ai.pipeline", name="evaluate_progress"):
         response = _call_claude(_PROGRESS_SYSTEM, prompt, 2048, "progress_evaluation")
-        updated = json.loads(_strip_fences(response.content[0].text))
-        return [Task(**t) for t in updated]
+        updated = _parse_json(response.content[0].text)
+        return [Task(**_normalize_task(t, i)) for i, t in enumerate(updated)]
