@@ -2,31 +2,13 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from typing import Optional
 import logging
 from models.schemas import Assignment, AssignmentCreate, ProgressUpdateRequest, AssignmentStatus
-from services import supabase_service, redis_service, assignment_service, progress_service, google_service
+from services import supabase_service, redis_service, assignment_service, progress_service
 from services.assignment_sync import serialize_assignment, merge_doc_eval_into_assignment
 from datetime import datetime
 import uuid
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 logger = logging.getLogger(__name__)
-
-
-async def _maybe_create_google_doc(assignment: Assignment, user_id: Optional[str]) -> Assignment:
-    """Create a Google Doc titled with the assignment name when the user is connected."""
-    if assignment.document_url or not user_id:
-        return assignment
-    token_data = await redis_service.get_google_token(user_id)
-    if not token_data:
-        return assignment
-    try:
-        _, url, updated_token = await google_service.create_document(assignment.title, token_data)
-        await redis_service.save_google_token(user_id, updated_token)
-        assignment.document_url = url
-    except Exception as exc:
-        logger.warning(
-            "Google Doc creation failed for assignment %s: %s", assignment.id, exc
-        )
-    return assignment
 
 
 @router.get("/", response_model=list[Assignment])
@@ -48,7 +30,7 @@ async def create_assignment(body: AssignmentCreate, x_user_id: Optional[str] = H
             detail=f"Could not analyze assignment rubric: {exc}",
         )
 
-    assignment = await _maybe_create_google_doc(assignment, x_user_id)
+    assignment = await assignment_service.maybe_attach_google_doc(assignment, x_user_id)
 
     data = serialize_assignment(assignment)
     await supabase_service.upsert_assignment(data)
@@ -74,6 +56,41 @@ async def get_assignment(assignment_id: str, fresh: bool = Query(False)):
     assignment = await merge_doc_eval_into_assignment(assignment)
 
     data = serialize_assignment(assignment)
+    await redis_service.cache_assignment(assignment_id, data)
+    return assignment
+
+
+@router.post("/{assignment_id}/create-document", response_model=Assignment)
+async def create_assignment_document(
+    assignment_id: str,
+    x_user_id: Optional[str] = Header(None),
+):
+    """Create a Google Doc for an assignment that does not have one yet."""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    row = await supabase_service.get_assignment(assignment_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    assignment = Assignment(**row)
+    if assignment.document_url:
+        return assignment
+
+    token_data = await redis_service.get_google_token(x_user_id)
+    if not token_data:
+        raise HTTPException(
+            status_code=400,
+            detail="Connect Google first from the dashboard or new assignment page.",
+        )
+
+    assignment = await assignment_service.maybe_attach_google_doc(assignment, x_user_id)
+    if not assignment.document_url:
+        raise HTTPException(status_code=502, detail="Could not create Google Doc")
+
+    assignment.updated_at = datetime.utcnow()
+    data = serialize_assignment(assignment)
+    await supabase_service.upsert_assignment(data)
     await redis_service.cache_assignment(assignment_id, data)
     return assignment
 

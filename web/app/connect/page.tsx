@@ -28,6 +28,8 @@ interface ActiveSession {
   sessionId: string;
   contextId: string;
   liveViewUrl: string;
+  startUrl?: string | null;
+  preferNewTab?: boolean;
 }
 
 export default function Connect() {
@@ -39,7 +41,12 @@ export default function Connect() {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [newAssignmentCount, setNewAssignmentCount] = useState<number | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [liveViewDisconnected, setLiveViewDisconnected] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
+  const [cancelling, setCancelling] = useState(false);
+  const sessionRef = useRef<ActiveSession | null>(null);
+  const stepRef = useRef<Step>("idle");
 
   const userId = getUserId();
 
@@ -63,19 +70,35 @@ export default function Connect() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
   async function handleConnect(platformId: string) {
     setStep("opening");
     setError(null);
     setDoneMessage(null);
     try {
       const res = await api.discovery.connect(platformId, userId);
-      setSession({
+      const nextSession: ActiveSession = {
         platform: platformId,
         sessionId: res.session_id,
         contextId: res.context_id,
         liveViewUrl: res.live_view_url,
-      });
+        startUrl: res.start_url,
+        preferNewTab: res.prefer_new_tab,
+      };
+      setSession(nextSession);
+      setLiveViewDisconnected(false);
+      setIframeKey((k) => k + 1);
       setStep("live");
+      if (res.prefer_new_tab) {
+        window.open(res.live_view_url, "_blank", "noopener,noreferrer");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not open browser session");
       setStep("idle");
@@ -86,70 +109,100 @@ export default function Connect() {
     if (!session) return;
     setStep("scraping");
     setError(null);
+    setDoneMessage(null);
     setNewAssignmentCount(null);
 
-    // Snapshot how many assignments exist right now so we can detect new ones.
-    let baselineCount = 0;
-    try {
-      const existing = await api.assignments.list();
-      baselineCount = existing.length;
-    } catch {
-      // Non-fatal — polling will still work, just won't show a delta.
-    }
+    const platform = session.platform;
+    const sessionId = session.sessionId;
+    const contextId = session.contextId;
 
     try {
-      await api.discovery.scrape(
-        session.platform,
-        session.sessionId,
-        session.contextId,
+      const res = await api.discovery.scrape(
+        platform,
+        sessionId,
+        contextId,
         userId
       );
-      const platform = session.platform;
-      setStep("done");
       setSession(null);
-      setDoneMessage(`Scanning ${platform} for assignments…`);
-      setConnected((prev) => (prev.includes(platform) ? prev : [...prev, platform]));
+      setStep("done");
 
-      // Poll until new assignments appear (up to 2 minutes).
-      let attempts = 0;
-      pollRef.current = setInterval(async () => {
-        attempts += 1;
-        try {
-          const updated = await api.assignments.list();
-          const added = updated.length - baselineCount;
-          if (added > 0) {
-            setNewAssignmentCount(added);
-            setDoneMessage(
-              `Found ${added} new assignment${added === 1 ? "" : "s"} from ${platform}.`
-            );
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-          } else if (attempts >= 40) {
-            // 40 × 3 s = 2 min timeout
-            setDoneMessage(
-              `Scan complete. Check the dashboard — new assignments may take a moment to appear.`
-            );
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-          }
-        } catch {
-          // ignore transient fetch errors during polling
-        }
-      }, 3_000);
+      if (res.status === "empty") {
+        setError(res.message);
+        setStep("idle");
+        return;
+      }
+
+      const saved = res.assignments_saved ?? 0;
+      if (saved > 0) {
+        setNewAssignmentCount(saved);
+        setDoneMessage(res.message);
+        setConnected((prev) => (prev.includes(platform) ? prev : [...prev, platform]));
+      } else {
+        setError(res.message || "Scan finished but no assignments were saved.");
+        setStep("idle");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Scan failed");
-      setStep("live");
+      setSession(null);
+      setStep("idle");
     }
   }
 
-  // Clean up poll on unmount
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  // Browserbase live view posts this when its WebSocket drops
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      if (event.data === "browserbase-disconnected") {
+        setLiveViewDisconnected(true);
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
-  function handleCancel() {
+  async function handleReconnectLiveView() {
+    if (!session) return;
+    setReconnecting(true);
+    setError(null);
+    try {
+      const res = await api.discovery.refreshLiveView(session.sessionId);
+      setSession({ ...session, liveViewUrl: res.live_view_url });
+      setLiveViewDisconnected(false);
+      setIframeKey((k) => k + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reconnect live browser");
+    } finally {
+      setReconnecting(false);
+    }
+  }
+
+  async function handleCancel() {
+    const active = sessionRef.current;
+    setCancelling(true);
     setSession(null);
     setStep("idle");
     setError(null);
+    setLiveViewDisconnected(false);
+    try {
+      if (active?.sessionId) {
+        await api.discovery.cancelSession(active.sessionId);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not close browser session");
+    } finally {
+      setCancelling(false);
+    }
   }
+
+  // Terminate orphaned connect sessions if the user leaves mid-login
+  useEffect(() => {
+    return () => {
+      if (stepRef.current !== "live") return;
+      const active = sessionRef.current;
+      if (active?.sessionId) {
+        api.discovery.cancelSession(active.sessionId).catch(() => {});
+      }
+    };
+  }, []);
 
   async function handleDisconnect(platformId: string) {
     try {
@@ -208,15 +261,63 @@ export default function Connect() {
                 <MonitorSmartphone size={16} />
                 Live browser — {session.platform}
               </div>
-              <span className="text-xs text-scaffold-500">
-                Log in, then click &quot;Scan my tasks&quot; below
-              </span>
+              <div className="flex items-center gap-3">
+                <a
+                  href={session.liveViewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-medium text-scaffold-600 hover:text-scaffold-800 underline"
+                >
+                  Open in new tab
+                </a>
+                <span className="text-xs text-scaffold-500">
+                  Log in, then click &quot;Scan my tasks&quot; below
+                </span>
+              </div>
             </div>
+            {session.preferNewTab ? (
+              <div className="px-5 py-3 bg-amber-50 border-b border-amber-100 text-sm text-amber-900">
+                <strong>Log in via the new tab</strong> that just opened — Notion and
+                Google use pop-up sign-in that doesn&apos;t work well inside an embedded
+                frame. After logging in there, return here and click{" "}
+                <strong>Scan my tasks</strong>.
+              </div>
+            ) : session.startUrl ? (
+              <div className="px-5 py-2.5 bg-scaffold-50 border-b border-scaffold-100 text-xs text-scaffold-700">
+                Should open{" "}
+                <span className="font-medium">{session.startUrl}</span> automatically.
+                If the page is blank, use the address bar or{" "}
+                <a
+                  href={session.liveViewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium underline"
+                >
+                  open the live browser in a new tab
+                </a>
+                .
+              </div>
+            ) : null}
+            {liveViewDisconnected && (
+              <div className="flex items-center justify-between gap-3 px-5 py-2.5 bg-red-50 border-b border-red-100 text-xs text-red-700">
+                <span>Live browser disconnected.</span>
+                <button
+                  type="button"
+                  onClick={handleReconnectLiveView}
+                  disabled={reconnecting}
+                  className="shrink-0 rounded-md border border-red-300 bg-white px-2.5 py-1 font-medium hover:bg-red-50 disabled:opacity-50"
+                >
+                  {reconnecting ? "Reconnecting…" : "Reconnect"}
+                </button>
+              </div>
+            )}
             <iframe
+              key={iframeKey}
               src={session.liveViewUrl}
               className="w-full"
               style={{ height: 520, border: "none" }}
               allow="clipboard-read; clipboard-write"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals"
             />
             <div className="flex items-center gap-3 px-5 py-4 border-t border-gray-100 bg-gray-50">
               <button
@@ -228,17 +329,21 @@ export default function Connect() {
               </button>
               <button
                 onClick={handleCancel}
-                className="px-4 py-2.5 text-sm text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+                disabled={cancelling}
+                className="px-4 py-2.5 text-sm text-gray-600 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
               >
-                Cancel
+                {cancelling ? "Closing…" : "Cancel"}
               </button>
             </div>
           </div>
         )}
 
         {step === "scraping" && (
-          <div className="mb-8 flex justify-center rounded-xl border border-scaffold-100 bg-scaffold-50 px-5 py-8">
-            <ScaffoldLoader width={64} label="Extracting assignments…" />
+          <div className="mb-8 flex flex-col items-center gap-2 rounded-xl border border-scaffold-100 bg-scaffold-50 px-5 py-8">
+            <ScaffoldLoader width={64} label="Scanning for assignments…" />
+            <p className="text-xs text-scaffold-600 max-w-md text-center">
+              This uses AI to explore your workspace and may take 1–2 minutes.
+            </p>
           </div>
         )}
 

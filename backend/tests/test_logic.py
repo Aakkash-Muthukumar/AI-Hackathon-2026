@@ -1,7 +1,10 @@
 """Unit tests for pure logic that needs no external services."""
+import asyncio
+from datetime import datetime
+from types import SimpleNamespace
 from services.claude_service import _strip_fences
 from services.redis_service import content_changed_enough
-from services.browserbase_service import normalize_assignment
+from services.browserbase_service import normalize_assignment, _get_live_view_url
 from models.schemas import AssignmentSource
 
 
@@ -76,3 +79,47 @@ class TestNormalizeAssignment:
         assert result["prompt"] == "Do the homework"
         assert result["rubric"][0]["criterion"] == "Accuracy"
         assert result["rubric"][0]["points"] is None
+
+    def test_parses_human_readable_deadline(self):
+        result = normalize_assignment(
+            {"title": "Essay", "due_date": "June 21, 2023"},
+            AssignmentSource.NOTION,
+        )
+        assert result["deadline"] == datetime(2023, 6, 21)
+
+    def test_blank_deadline_becomes_none(self):
+        result = normalize_assignment(
+            {"title": "Essay", "due_date": ""},
+            AssignmentSource.NOTION,
+        )
+        assert result["deadline"] is None
+
+
+class TestGetLiveViewUrl:
+    def test_prefers_first_page_fullscreen_url(self):
+        bb = SimpleNamespace(
+            sessions=SimpleNamespace(
+                debug=lambda session_id: SimpleNamespace(
+                    debugger_fullscreen_url="https://debug.example/session",
+                    pages=[
+                        SimpleNamespace(
+                            debugger_fullscreen_url="https://debug.example/page-0"
+                        )
+                    ],
+                )
+            )
+        )
+        url = asyncio.run(_get_live_view_url(bb, "sess-123"))
+        assert url == "https://debug.example/page-0"
+
+    def test_falls_back_to_session_fullscreen_url(self):
+        bb = SimpleNamespace(
+            sessions=SimpleNamespace(
+                debug=lambda session_id: SimpleNamespace(
+                    debugger_fullscreen_url="https://debug.example/session",
+                    pages=[],
+                )
+            )
+        )
+        url = asyncio.run(_get_live_view_url(bb, "sess-123"))
+        assert url == "https://debug.example/session"

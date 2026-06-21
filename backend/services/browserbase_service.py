@@ -13,8 +13,11 @@ authenticated context without requiring the user to log in again.
 import os
 import hashlib
 import logging
+import asyncio
+import re
+from datetime import datetime
 import sentry_sdk
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from models.schemas import AssignmentSource
 
 logger = logging.getLogger(__name__)
@@ -47,22 +50,216 @@ def _get_bb():
     return bb
 
 
-async def _stagehand_for_session(session_id: str):
-    from stagehand import Stagehand, StagehandConfig  # type: ignore[import]
-    cfg = StagehandConfig(
-        env="BROWSERBASE",
-        api_key=os.getenv("BROWSERBASE_API_KEY"),
-        project_id=_PROJECT_ID,
-        session_id=session_id,
-        model_name="claude-sonnet-4-6",
+MODEL_NAME = "anthropic/claude-sonnet-4-6"
+_MODEL_OPTIONS = {"model": MODEL_NAME}
+
+_ASSIGNMENTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "assignments": {
+            "type": "array",
+            "description": "Assignments, tasks, or homework items found",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Assignment title"},
+                    "due_date": {
+                        "type": "string",
+                        "description": "Due date if shown, else empty string",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Instructions, body text, or requirements",
+                    },
+                    "rubric": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "criterion": {"type": "string"},
+                                "points": {"type": "number"},
+                                "description": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+                "required": ["title"],
+            },
+        }
+    },
+    "required": ["assignments"],
+}
+
+
+def _get_stagehand_client():
+    from stagehand import AsyncStagehand  # type: ignore[import]
+    return AsyncStagehand(
+        browserbase_api_key=os.getenv("BROWSERBASE_API_KEY"),
         model_api_key=os.getenv("ANTHROPIC_API_KEY"),
     )
-    sh = Stagehand(config=cfg)
-    await sh.init()
-    return sh
 
 
-# ── Phase 1: Create an authenticated session for the user to log into ─────────
+def _assignments_from_extract(data) -> List[dict]:
+    if not data:
+        return []
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+    if not isinstance(data, dict):
+        return []
+    for key in ("assignments", "items", "tasks", "results"):
+        items = data.get(key)
+        if isinstance(items, list):
+            return [r for r in items if isinstance(r, dict)]
+    if data.get("title"):
+        return [data]
+    return []
+
+
+async def _sh_start_session(client, browserbase_session_id: str) -> str:
+    """
+    Register an existing Browserbase session with Stagehand and set the AI model.
+
+    Required before act/extract/navigate — otherwise Stagehand returns 400.
+    """
+    response = await client.sessions.start(
+        model_name=MODEL_NAME,
+        browserbase_session_id=browserbase_session_id,
+    )
+    data = getattr(response, "data", None)
+    session_id = getattr(data, "session_id", None) or browserbase_session_id
+    logger.info("Stagehand session ready: %s", session_id)
+    return session_id
+
+
+async def _sh_navigate(client, session_id: str, url: str) -> None:
+    await client.sessions.navigate(id=session_id, url=url)
+
+
+async def _sh_act(client, session_id: str, instruction: str) -> None:
+    await client.sessions.act(
+        id=session_id,
+        input=instruction,
+        options=_MODEL_OPTIONS,
+    )
+
+
+async def _sh_extract(client, session_id: str, instruction: str) -> List[dict]:
+    response = await client.sessions.extract(
+        id=session_id,
+        instruction=instruction,
+        schema=_ASSIGNMENTS_SCHEMA,
+        options=_MODEL_OPTIONS,
+    )
+    result = getattr(getattr(response, "data", None), "result", None)
+    return _assignments_from_extract(result)
+
+
+async def _sh_execute(client, session_id: str, instruction: str, max_steps: int = 12) -> None:
+    await client.sessions.execute(
+        id=session_id,
+        execute_options={"instruction": instruction, "max_steps": max_steps},
+        agent_config={
+            "model": MODEL_NAME,
+            "cua": False,
+        },
+    )
+
+
+# Platform login pages — user navigates here inside the live browser.
+_START_URLS = {
+    AssignmentSource.CANVAS: "https://canvas.instructure.com/login",
+    AssignmentSource.NOTION: "https://www.notion.so/login",
+    AssignmentSource.GOOGLE_CLASSROOM: (
+        "https://accounts.google.com/signin"
+        "?continue=https://classroom.google.com&flowName=GlifWebSignIn"
+    ),
+}
+
+# Platforms where OAuth popups block iframe login — open live view in a new tab.
+OAUTH_HEAVY_PLATFORMS = frozenset({
+    AssignmentSource.NOTION,
+    AssignmentSource.GOOGLE_CLASSROOM,
+})
+
+
+# Active Phase-1 CDP connections — kept open so navigation works without
+# killing the live-view WebSocket. Released on scrape, cancel, or timeout.
+_active_connect_sessions: Dict[str, Dict[str, Any]] = {}
+
+
+async def _navigate_connect_session(session, start_url: Optional[str]) -> None:
+    """
+    Connect Playwright to the session and navigate to the platform login page.
+
+    The CDP connection stays open until release_connect_session() is called.
+    Disconnecting immediately after goto() breaks the embedded live view.
+    """
+    from playwright.async_api import async_playwright  # type: ignore[import]
+
+    connect_url = getattr(session, "connect_url", None)
+    if not connect_url:
+        api_key = os.getenv("BROWSERBASE_API_KEY", "")
+        connect_url = (
+            f"wss://connect.browserbase.com"
+            f"?apiKey={api_key}&sessionId={session.id}"
+        )
+
+    pw = await async_playwright().start()
+    browser = await pw.chromium.connect_over_cdp(connect_url)
+    ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+
+    if start_url:
+        await page.goto(start_url, wait_until="domcontentloaded", timeout=45_000)
+
+    _active_connect_sessions[session.id] = {"pw": pw, "browser": browser}
+
+
+async def release_connect_session(session_id: str) -> None:
+    """Close the Phase-1 Playwright CDP connection for a connect session."""
+    entry = _active_connect_sessions.pop(session_id, None)
+    if not entry:
+        return
+    browser = entry.get("browser")
+    pw = entry.get("pw")
+    try:
+        if browser:
+            # Playwright CDP: close() drops the local connection without killing BB session.
+            close_fn = getattr(browser, "close", None)
+            disconnect_fn = getattr(browser, "disconnect", None)
+            if disconnect_fn:
+                await disconnect_fn()
+            elif close_fn:
+                await close_fn()
+    except Exception as err:
+        logger.warning("connect browser release failed for %s: %s", session_id, err)
+    try:
+        if pw:
+            await pw.stop()
+    except Exception as err:
+        logger.warning("playwright stop failed for %s: %s", session_id, err)
+
+
+async def terminate_browserbase_session(session_id: str) -> None:
+    """
+    End a keep-alive Browserbase session and flush persisted context data.
+
+    Per Browserbase docs, call REQUEST_RELEASE when done so cookies saved with
+    persist: true are written back to the Context.
+    """
+    await release_connect_session(session_id)
+    try:
+        bb = _get_bb()
+        bb.sessions.update(
+            session_id,
+            status="REQUEST_RELEASE",
+            project_id=_PROJECT_ID,
+        )
+        # Context sync happens after session close — brief wait before reuse.
+        await asyncio.sleep(2)
+    except Exception as err:
+        logger.warning("Could not terminate Browserbase session %s: %s", session_id, err)
+
 
 async def create_connect_session(
     platform: AssignmentSource,
@@ -70,7 +267,7 @@ async def create_connect_session(
 ) -> dict:
     """
     Create a Browserbase context (if none saved) and a session tied to it.
-    Returns session_id, live_view_url, and context_id.
+    Returns session_id, live_view_url, context_id, and start_url.
     The caller should save context_id to Redis keyed by (user_id, platform).
     """
     bb = _get_bb()
@@ -83,123 +280,113 @@ async def create_connect_session(
 
     session = bb.sessions.create(
         project_id=_PROJECT_ID,
+        keep_alive=True,
+        timeout=1800,
         browser_settings={
             "context": {"id": context_id, "persist": True},
         },
     )
 
-    # Navigate to the platform's login page so the user lands there immediately.
-    # We use raw Playwright (CDP) rather than Stagehand for Phase 1 — no AI needed,
-    # and browser.disconnect() leaves the remote session alive (unlike browser.close()
-    # or sh.close(), which reset the page to about:blank).
-    _START_URLS = {
-        AssignmentSource.CANVAS: "https://canvas.instructure.com/login",
-        AssignmentSource.NOTION: "https://www.notion.so/login",
-        AssignmentSource.GOOGLE_CLASSROOM: "https://classroom.google.com",
-    }
-    start_url = _START_URLS.get(platform, "about:blank")
-
+    start_url = _START_URLS.get(platform)
     try:
-        from playwright.async_api import async_playwright  # type: ignore[import]
-        api_key = os.getenv("BROWSERBASE_API_KEY", "")
-        cdp_url = (
-            f"wss://connect.browserbase.com"
-            f"?apiKey={api_key}&sessionId={session.id}"
-        )
-        async with async_playwright() as pw:
-            browser = await pw.chromium.connect_over_cdp(cdp_url)
-            ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-            await page.goto(start_url, wait_until="domcontentloaded", timeout=30_000)
-            # disconnect() closes the WebSocket without sending Browser.close —
-            # the remote Browserbase session and its pages stay alive.
-            await browser.disconnect()
+        await _navigate_connect_session(session, start_url)
     except Exception as nav_err:
-        # Non-fatal — user can navigate manually inside the live view.
+        await release_connect_session(session.id)
         logger.warning("Phase 1 navigation failed (user can navigate manually): %s", nav_err)
 
-    # Prefer the live view URL from the session object; fall back to the
-    # constructed URL if the SDK doesn't expose live_urls on this version.
-    live_view_url = _extract_live_view_url(session)
+    await asyncio.sleep(0.5)
+    live_view_url = await _get_live_view_url(bb, session.id)
 
     return {
         "session_id": session.id,
         "live_view_url": live_view_url,
         "context_id": context_id,
+        "start_url": start_url,
+        "prefer_new_tab": platform in OAUTH_HEAVY_PLATFORMS,
     }
 
 
-def _extract_live_view_url(session) -> str:
-    """
-    Return the embeddable HTTPS live-view URL from the Browserbase session object.
+async def refresh_live_view_url(session_id: str) -> str:
+    """Fetch a fresh embeddable live-view URL for an existing session."""
+    bb = _get_bb()
+    return await _get_live_view_url(bb, session_id)
 
-    The Python SDK uses snake_case: live_view (HTTPS, embeddable in iframe).
-    The `live` attribute is a wss:// CDP WebSocket URL — not usable in an iframe.
+
+async def _get_live_view_url(bb, session_id: str) -> str:
     """
-    try:
-        live_urls = getattr(session, "live_urls", None)
-        if live_urls:
-            # Prefer snake_case (current SDK), then camelCase (older SDK versions)
-            for attr in ("live_view", "liveView", "live"):
-                url = getattr(live_urls, attr, None)
+    Return the embeddable HTTPS live-view URL for a running session.
+
+    Uses Browserbase's debug API (`sessions.debug`) which returns
+    `debuggerFullscreenUrl` — the URL meant for iframe embedding.
+
+    Do NOT fall back to https://www.browserbase.com/sessions/{id}; that is the
+    Browserbase dashboard login page, not the remote browser view.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            live = bb.sessions.debug(session_id)
+            pages = getattr(live, "pages", None) or []
+            if pages:
+                url = getattr(pages[0], "debugger_fullscreen_url", None)
                 if url and str(url).startswith("https://"):
                     return str(url)
-    except Exception:
-        pass
-    # Fallback: the Browserbase web UI URL for this session (always embeddable)
-    return f"https://www.browserbase.com/sessions/{session.id}"
+            url = getattr(live, "debugger_fullscreen_url", None)
+            if url and str(url).startswith("https://"):
+                return str(url)
+            raise RuntimeError("Browserbase debug API returned no embeddable live view URL")
+        except Exception as err:
+            last_err = err
+            if attempt < 2:
+                await asyncio.sleep(0.5)
+    raise RuntimeError(
+        f"Could not fetch Browserbase live view URL for session {session_id}: {last_err}"
+    ) from last_err
 
 
 # ── Phase 2: Scrape with an already-authenticated session ─────────────────────
 
-async def _scrape_canvas(sh) -> List[dict]:
-    await sh.act("Navigate to the Assignments section and list all assignments")
-    result = await sh.extract({
-        "instruction": "Extract all assignments visible on the page",
-        "schema": {
-            "assignments": [{
-                "title": "string",
-                "due_date": "string or null",
-                "description": "string",
-                "rubric": [{"criterion": "string", "points": "number or null", "description": "string"}],
-            }]
-        },
-    })
-    return result.get("assignments", [])
+async def _scrape_canvas(client, session_id: str) -> List[dict]:
+    await _sh_act(client, session_id, "Open the Assignments area and show all assignments")
+    return await _sh_extract(
+        client,
+        session_id,
+        "Extract every assignment with title, due date, description, and rubric criteria",
+    )
 
 
-async def _scrape_notion(sh) -> List[dict]:
-    await sh.act("Find the assignments or tasks database and open it")
-    result = await sh.extract({
-        "instruction": "Extract assignment pages with title, due date, content, and any rubric",
-        "schema": {
-            "assignments": [{
-                "title": "string",
-                "due_date": "string or null",
-                "description": "string",
-                "rubric": "array or null",
-            }]
-        },
-    })
-    return result.get("assignments", [])
+async def _scrape_notion(client, session_id: str) -> List[dict]:
+    await _sh_navigate(client, session_id, "https://www.notion.so/")
+    await asyncio.sleep(2)
+    await _sh_execute(
+        client,
+        session_id,
+        "In this Notion workspace, find pages or databases about assignments, homework, "
+        "tasks, deadlines, or coursework. Open the most relevant database or list view.",
+        max_steps=15,
+    )
+    return await _sh_extract(
+        client,
+        session_id,
+        "Extract every assignment-like item visible: title, due date, page content as "
+        "description, and any rubric or grading criteria",
+    )
 
 
-async def _scrape_google_classroom(sh) -> List[dict]:
-    await sh.act("Navigate to Classwork across all courses")
-    result = await sh.extract({
-        "instruction": "Extract every assignment from all courses",
-        "schema": {
-            "assignments": [{
-                "title": "string",
-                "course": "string",
-                "due_date": "string or null",
-                "instructions": "string",
-                "rubric": "array or null",
-                "document_url": "string or null",
-            }]
-        },
-    })
-    return result.get("assignments", [])
+async def _scrape_google_classroom(client, session_id: str) -> List[dict]:
+    await _sh_navigate(client, session_id, "https://classroom.google.com/")
+    await asyncio.sleep(2)
+    await _sh_act(
+        client,
+        session_id,
+        "Open Classwork for each course and show all assignments",
+    )
+    return await _sh_extract(
+        client,
+        session_id,
+        "Extract every assignment from all visible courses with title, course name, due "
+        "date, instructions, rubric, and any linked document URL",
+    )
 
 
 _SCRAPERS = {
@@ -214,33 +401,32 @@ async def scrape_authenticated_session(
     session_id: str,
 ) -> List[dict]:
     """
-    Connect Stagehand to a session the user has already logged into and
-    extract assignments. Does not attempt any login.
+    Use Stagehand v3 against the Browserbase session the user logged into.
     """
     _require_bb()
-    bb = _get_bb()
+
+    await release_connect_session(session_id)
+    await asyncio.sleep(0.5)
 
     scraper = _SCRAPERS.get(platform)
     if not scraper:
         raise ValueError(f"Platform '{platform}' not yet supported")
 
-    sh = await _stagehand_for_session(session_id)
+    client = _get_stagehand_client()
     try:
-        results = await scraper(sh)
-        return results
+        async with client:
+            stagehand_id = await _sh_start_session(client, session_id)
+            results = await scraper(client, stagehand_id)
+            logger.info(
+                "Stagehand extracted %d raw assignment(s) from %s session %s",
+                len(results), platform.value, session_id,
+            )
+            return results
     except Exception as e:
         sentry_sdk.capture_exception(e)
         raise
     finally:
-        try:
-            await sh.close()
-        except Exception:
-            pass
-        try:
-            # REQUEST_RELEASE signals Browserbase that we're done with the session.
-            bb.sessions.update(session_id, status="REQUEST_RELEASE")
-        except Exception as term_err:
-            logger.warning("Could not release Browserbase session %s: %s", session_id, term_err)
+        await terminate_browserbase_session(session_id)
 
 
 def stable_assignment_id(user_id: str, platform: str, title: str) -> str:
@@ -253,6 +439,44 @@ def stable_assignment_id(user_id: str, platform: str, title: str) -> str:
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
+def _parse_deadline(value) -> Optional[datetime]:
+    """Parse scraped due-date strings into datetimes; return None if unknown."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "null", "n/a", "unknown", "tbd"}:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%B %d %Y",
+        "%b %d %Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    # Strip ordinal suffixes: "June 21st, 2023" -> "June 21, 2023"
+    cleaned = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text)
+    if cleaned != text:
+        return _parse_deadline(cleaned)
+    return None
+
+
 def normalize_assignment(raw: dict, source: AssignmentSource) -> dict:
     rubric_raw = raw.get("rubric") or []
     rubric = []
@@ -263,9 +487,10 @@ def normalize_assignment(raw: dict, source: AssignmentSource) -> dict:
                 "points": r.get("points"),
                 "description": r.get("description") or "",
             })
+    raw_deadline = raw.get("due_date") or raw.get("deadline")
     return {
         "title": raw.get("title") or "Untitled Assignment",
-        "deadline": raw.get("due_date") or raw.get("deadline"),
+        "deadline": _parse_deadline(raw_deadline),
         "source": source,
         "prompt": raw.get("instructions") or raw.get("description") or raw.get("prompt") or "",
         "rubric": rubric,

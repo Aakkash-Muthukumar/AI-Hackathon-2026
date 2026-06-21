@@ -92,6 +92,8 @@ class ConnectResponse(BaseModel):
     live_view_url: str
     context_id: str
     platform: AssignmentSource
+    start_url: Optional[str] = None
+    prefer_new_tab: bool = False
 
 
 class ScrapeRequest(BaseModel):

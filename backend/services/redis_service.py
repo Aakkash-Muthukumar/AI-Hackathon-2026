@@ -88,6 +88,12 @@ async def save_bb_context(user_id: str, platform: str, context_id: str, ttl: int
     await r.setex(f"bb_context:{user_id}:{platform}", ttl, context_id)
 
 
+async def mark_platform_connected(user_id: str, platform: str, ttl: int = 30 * 86400):
+    """Mark a platform as successfully connected (post-scrape)."""
+    r = await get_redis()
+    await r.setex(f"bb_connected:{user_id}:{platform}", ttl, "1")
+
+
 async def get_bb_context(user_id: str, platform: str) -> Optional[str]:
     r = await get_redis()
     return await r.get(f"bb_context:{user_id}:{platform}")
@@ -96,13 +102,14 @@ async def get_bb_context(user_id: str, platform: str) -> Optional[str]:
 async def delete_bb_context(user_id: str, platform: str):
     r = await get_redis()
     await r.delete(f"bb_context:{user_id}:{platform}")
+    await r.delete(f"bb_connected:{user_id}:{platform}")
 
 
 async def get_connected_platforms(user_id: str) -> list[str]:
-    """Return list of platform names the user has a saved context for."""
+    """Return platforms the user has successfully connected (completed a scrape)."""
     r = await get_redis()
-    keys = await r.keys(f"bb_context:{user_id}:*")
-    prefix = f"bb_context:{user_id}:"
+    keys = await r.keys(f"bb_connected:{user_id}:*")
+    prefix = f"bb_connected:{user_id}:"
     return [k[len(prefix):] for k in keys]
 
 

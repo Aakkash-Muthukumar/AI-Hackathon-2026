@@ -68,6 +68,9 @@ export const api = {
 
     complete: (id: string) =>
       request<Assignment>(`/assignments/${id}/complete`, { method: "POST" }),
+
+    createDocument: (id: string) =>
+      request<Assignment>(`/assignments/${id}/create-document`, { method: "POST" }),
   },
 
   discovery: {
@@ -77,10 +80,23 @@ export const api = {
         live_view_url: string;
         context_id: string;
         platform: string;
+        start_url?: string | null;
+        prefer_new_tab?: boolean;
       }>("/discovery/connect", {
         method: "POST",
         body: JSON.stringify({ platform, user_id: userId }),
       }),
+
+    refreshLiveView: (sessionId: string) =>
+      request<{ session_id: string; live_view_url: string }>(
+        `/discovery/sessions/${sessionId}/live-view`
+      ),
+
+    cancelSession: (sessionId: string) =>
+      request<{ status: string; session_id: string }>(
+        `/discovery/sessions/${sessionId}/cancel`,
+        { method: "POST" }
+      ),
 
     scrape: (
       platform: string,
@@ -88,7 +104,13 @@ export const api = {
       contextId: string,
       userId: string
     ) =>
-      request<{ status: string; message: string }>("/discovery/scrape", {
+      request<{
+        status: string;
+        platform: string;
+        message: string;
+        assignments_found?: number;
+        assignments_saved?: number;
+      }>("/discovery/scrape", {
         method: "POST",
         body: JSON.stringify({
           platform,
