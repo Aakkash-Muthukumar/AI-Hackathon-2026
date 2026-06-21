@@ -7,6 +7,7 @@ import os
 import json
 import asyncio
 import sentry_sdk
+from datetime import datetime, timezone
 from typing import Optional
 
 GOOGLE_AVAILABLE = False
@@ -19,7 +20,10 @@ try:
 except ImportError:
     pass
 
-_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+_SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/documents.readonly",
+]
 _REDIRECT_URI = os.getenv(
     "GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
 )
@@ -45,7 +49,8 @@ def _require_google():
         )
 
 
-def get_auth_url(state: str) -> str:
+def get_auth_url(state: str) -> tuple[str, str]:
+    """Return (authorization_url, code_verifier) for PKCE — verifier must be stored until callback."""
     _require_google()
     flow = Flow.from_client_config(_client_config(), scopes=_SCOPES)
     flow.redirect_uri = _REDIRECT_URI
@@ -55,26 +60,27 @@ def get_auth_url(state: str) -> str:
         prompt="consent",          # always request refresh token
         include_granted_scopes="true",
     )
-    return url
+    return url, flow.code_verifier
 
 
-def exchange_code(code: str) -> dict:
+def exchange_code(code: str, code_verifier: str) -> dict:
     """Exchange authorization code for tokens. Returns serializable dict for Redis."""
     _require_google()
     flow = Flow.from_client_config(_client_config(), scopes=_SCOPES)
     flow.redirect_uri = _REDIRECT_URI
+    flow.code_verifier = code_verifier
     flow.fetch_token(code=code)
     return _creds_to_dict(flow.credentials)
 
 
 def _creds_to_dict(creds: "Credentials") -> dict:
-    from datetime import timezone
     expiry_iso = None
     if creds.expiry:
-        try:
-            expiry_iso = creds.expiry.replace(tzinfo=timezone.utc).isoformat()
-        except Exception:
-            expiry_iso = creds.expiry.isoformat()
+        # google-auth compares expiry to naive UTC — always store naive UTC
+        exp = creds.expiry
+        if exp.tzinfo is not None:
+            exp = exp.astimezone(timezone.utc).replace(tzinfo=None)
+        expiry_iso = exp.isoformat()
     return {
         "token": creds.token,
         "refresh_token": creds.refresh_token,
@@ -87,13 +93,13 @@ def _creds_to_dict(creds: "Credentials") -> dict:
 
 
 def _dict_to_creds(data: dict) -> "Credentials":
-    from datetime import datetime, timezone
     expiry = None
     if data.get("expiry"):
         raw = data["expiry"]
         expiry = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
+        # google-auth expects naive UTC for creds.expired checks
+        if expiry.tzinfo is not None:
+            expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
     return Credentials(
         token=data.get("token"),
         refresh_token=data.get("refresh_token"),
@@ -105,26 +111,97 @@ def _dict_to_creds(data: dict) -> "Credentials":
     )
 
 
+_GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+_WORD_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _extract_docs_api_text(document: dict) -> str:
+    """Pull plain text from a Google Docs API documents.get response."""
+    parts: list[str] = []
+
+    def walk_elements(elements: list) -> None:
+        for elem in elements:
+            if "textRun" in elem and elem["textRun"].get("content"):
+                parts.append(elem["textRun"]["content"])
+            elif "paragraph" in elem:
+                walk_elements(elem["paragraph"].get("elements", []))
+            elif "table" in elem:
+                for row in elem["table"].get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        walk_elements(cell.get("content", []))
+
+    for element in document.get("body", {}).get("content", []):
+        if "paragraph" in element:
+            walk_elements(element["paragraph"].get("elements", []))
+        elif "table" in element:
+            walk_elements([element])
+
+    return "".join(parts)
+
+
+def _fetch_via_docs_api(creds: "Credentials", doc_id: str) -> str:
+    service = build("docs", "v1", credentials=creds, cache_discovery=False)
+    document = service.documents().get(documentId=doc_id).execute()
+    return _extract_docs_api_text(document)
+
+
+def _fetch_docx(creds: "Credentials", doc_id: str) -> str:
+    """Download an uploaded .docx from Drive and extract plain text."""
+    from io import BytesIO
+    from docx import Document  # type: ignore[import]
+
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    raw = drive.files().get_media(fileId=doc_id).execute()
+    doc = Document(BytesIO(raw))
+    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+
 def _fetch_sync(doc_id: str, token_data: dict) -> tuple[str, dict]:
     """
-    Synchronous: fetch document plain text via Drive export.
-    Returns (text, updated_token_data) — updated_data reflects any token refresh.
+    Fetch document plain text. Uses Docs API for native Google Docs,
+    Drive export as fallback.
     """
     creds = _dict_to_creds(token_data)
 
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
 
-    service = build("drive", "v3", credentials=creds, cache_discovery=False)
-    content = service.files().export(fileId=doc_id, mimeType="text/plain").execute()
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    meta = drive.files().get(fileId=doc_id, fields="mimeType,name").execute()
+    mime = meta.get("mimeType", "")
+    name = meta.get("name", "document")
 
-    text: str
-    if isinstance(content, bytes):
-        text = content.decode("utf-8")
-    else:
-        text = str(content)
+    errors: list[str] = []
 
-    return text, _creds_to_dict(creds)
+    if mime == _GOOGLE_DOC_MIME:
+        try:
+            text = _fetch_via_docs_api(creds, doc_id)
+            return text, _creds_to_dict(creds)
+        except Exception as e:
+            errors.append(f"Docs API: {e}")
+
+        try:
+            content = drive.files().export(fileId=doc_id, mimeType="text/plain").execute()
+            text = content.decode("utf-8") if isinstance(content, bytes) else str(content)
+            return text, _creds_to_dict(creds)
+        except Exception as e:
+            errors.append(f"Drive export: {e}")
+
+        raise RuntimeError(
+            f"Could not read Google Doc '{name}'. "
+            + " ".join(errors)
+            + " Enable Google Docs API in Cloud Console and reconnect Google in the sidebar."
+        )
+
+    if mime == _WORD_DOCX_MIME:
+        text = _fetch_docx(creds, doc_id)
+        return text, _creds_to_dict(creds)
+
+    raise RuntimeError(
+        f"'{name}' is not a native Google Doc (type: {mime}). "
+        "Scaffold can only track native Google Docs — create one at docs.google.com → Blank document, "
+        "or paste your draft in the dashboard instead."
+    )
 
 
 async def fetch_document_text(doc_id: str, token_data: dict) -> tuple[str, dict]:

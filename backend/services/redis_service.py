@@ -124,6 +124,22 @@ async def delete_google_token(user_id: str):
     await r.delete(f"google_token:{user_id}")
 
 
+async def save_oauth_verifier(user_id: str, verifier: str, ttl: int = 600):
+    """Store PKCE code_verifier between /authorize and /callback (10 min TTL)."""
+    r = await get_redis()
+    await r.setex(f"oauth_verifier:{user_id}", ttl, verifier)
+
+
+async def pop_oauth_verifier(user_id: str) -> Optional[str]:
+    """Retrieve and delete the PKCE code_verifier for a user."""
+    r = await get_redis()
+    key = f"oauth_verifier:{user_id}"
+    verifier = await r.get(key)
+    if verifier:
+        await r.delete(key)
+    return verifier
+
+
 # ── Evaluate result cache (per doc × assignment, short-lived) ─────────────────
 
 async def cache_eval_result(doc_id: str, assignment_id: str, result: dict, ttl: int = 300):

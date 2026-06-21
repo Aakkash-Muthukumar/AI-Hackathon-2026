@@ -85,7 +85,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           user_id: userId,
         }),
       })
-        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+        .then(async (r) => {
+          if (!r.ok) {
+            const body = await r.text().catch(() => r.statusText)
+            throw new Error(body || `HTTP ${r.status}`)
+          }
+          return r.json()
+        })
         .then((data) => sendResponse({ ok: true, data }))
         .catch((err) => { Sentry.captureException(err); sendResponse({ ok: false, error: String(err) }) })
     )
@@ -106,9 +112,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === "GOOGLE_AUTH_URL") {
-    getUserId().then((userId) => {
+    getUserId().then(async (userId) => {
       const url = `${BACKEND}/auth/google/authorize?user_id=${encodeURIComponent(userId)}`
-      sendResponse({ ok: true, url })
+      try {
+        await chrome.tabs.create({ url })
+        sendResponse({ ok: true, url })
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) })
+      }
     })
     return true
   }

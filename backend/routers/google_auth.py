@@ -11,7 +11,8 @@ async def authorize(user_id: str):
     """Redirect the browser to Google's OAuth consent screen."""
     if not google_service.GOOGLE_AVAILABLE:
         raise HTTPException(503, "Google auth packages not installed on this server")
-    url = google_service.get_auth_url(state=user_id)
+    url, code_verifier = google_service.get_auth_url(state=user_id)
+    await redis_service.save_oauth_verifier(user_id, code_verifier)
     return RedirectResponse(url)
 
 
@@ -24,8 +25,14 @@ async def callback(code: str, state: str, error: str = ""):
         raise HTTPException(503, "Google auth packages not installed on this server")
 
     user_id = state
+    code_verifier = await redis_service.pop_oauth_verifier(user_id)
+    if not code_verifier:
+        raise HTTPException(
+            400,
+            "OAuth session expired — close the tab and click Connect Google account again.",
+        )
     try:
-        token_data = google_service.exchange_code(code)
+        token_data = google_service.exchange_code(code, code_verifier)
     except Exception as e:
         raise HTTPException(400, f"Token exchange failed: {e}")
 

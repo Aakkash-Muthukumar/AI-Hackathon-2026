@@ -103,7 +103,10 @@ _initTrigger()
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getDocId(): string {
-  const m = location.pathname.match(/\/document\/d\/([a-zA-Z0-9_-]+)/)
+  const path = location.pathname
+  // Published/embedded docs use /d/e/… — not a Drive file id
+  if (path.includes("/document/d/e/")) return ""
+  const m = path.match(/\/document\/d\/([a-zA-Z0-9_-]+)/)
   return m ? m[1] : ""
 }
 
@@ -193,12 +196,18 @@ function GDocsTrackerSidebar() {
   // ── Google auth flow ────────────────────────────────────────────────────────
 
   function openAuthTab() {
+    setError(null)
     chrome.runtime.sendMessage({ type: "GOOGLE_AUTH_URL" }, (res) => {
-      if (res?.url) {
-        chrome.tabs.create({ url: res.url })
-        setAuthPolling(true)
-        pollAuthStatus()
+      if (chrome.runtime.lastError) {
+        setError(chrome.runtime.lastError.message ?? "Extension error")
+        return
       }
+      if (!res?.ok) {
+        setError(res?.error ?? "Could not open Google sign-in")
+        return
+      }
+      setAuthPolling(true)
+      pollAuthStatus()
     })
   }
 
@@ -328,6 +337,9 @@ function GDocsTrackerSidebar() {
               <Link2 size={14} />
               {authPolling ? "Waiting for authorization…" : "Connect Google account"}
             </button>
+            {error && (
+              <p style={{ color: "#ef4444", fontSize: 11, marginTop: 12 }}>{error}</p>
+            )}
           </div>
         )}
 

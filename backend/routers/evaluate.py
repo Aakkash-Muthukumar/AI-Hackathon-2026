@@ -55,12 +55,17 @@ async def evaluate(body: EvaluateRequest):
         await redis_service.save_google_token(body.user_id, updated_token)
     except Exception as e:
         err = str(e)
-        if any(k in err for k in ("401", "403", "invalid_grant", "Token has been expired")):
+        auth_errors = ("invalid_grant", "Token has been expired", "invalid_token", "Unauthorized")
+        if any(k in err for k in auth_errors) or "401" in err.split("HttpError")[0]:
             await redis_service.delete_google_token(body.user_id)
             raise HTTPException(
                 401,
-                "Google token expired or revoked. "
-                f"Re-authorize at /auth/google/authorize?user_id={body.user_id}",
+                "Google token expired or revoked. Disconnect and reconnect Google in the sidebar.",
+            )
+        if "403" in err and any(k in err for k in ("accessNotConfigured", "has not been used", "insufficient")):
+            raise HTTPException(
+                502,
+                "Enable Google Drive API and Google Docs API in your Google Cloud project, then reconnect.",
             )
         raise HTTPException(502, f"Could not fetch document from Google: {e}")
 
