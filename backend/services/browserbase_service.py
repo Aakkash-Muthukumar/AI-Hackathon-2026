@@ -81,18 +81,17 @@ async def create_connect_session(
         context = bb.contexts.create(project_id=_PROJECT_ID)
         context_id = context.id
 
-    # keep_alive=True keeps the Browserbase session alive after the Playwright
-    # control connection closes, so the live-view iframe stays interactive while
-    # the user logs in — even though we close Stagehand right after navigation.
     session = bb.sessions.create(
         project_id=_PROJECT_ID,
-        keep_alive=True,
         browser_settings={
             "context": {"id": context_id, "persist": True},
         },
     )
 
-    # Navigate to the platform's login page so the user lands there immediately
+    # Navigate to the platform's login page so the user lands there immediately.
+    # We use raw Playwright (CDP) rather than Stagehand for Phase 1 — no AI needed,
+    # and browser.disconnect() leaves the remote session alive (unlike browser.close()
+    # or sh.close(), which reset the page to about:blank).
     _START_URLS = {
         AssignmentSource.CANVAS: "https://canvas.instructure.com/login",
         AssignmentSource.NOTION: "https://www.notion.so/login",
@@ -100,17 +99,24 @@ async def create_connect_session(
     }
     start_url = _START_URLS.get(platform, "about:blank")
 
-    sh = await _stagehand_for_session(session.id)
     try:
-        await sh.page.goto(start_url)
-    finally:
-        # Close the Playwright control connection — the Browserbase session keeps
-        # running (keep_alive=True) and the live-view iframe in the frontend stays
-        # interactive for the user to log in.
-        try:
-            await sh.close()
-        except Exception:
-            pass
+        from playwright.async_api import async_playwright  # type: ignore[import]
+        api_key = os.getenv("BROWSERBASE_API_KEY", "")
+        cdp_url = (
+            f"wss://connect.browserbase.com"
+            f"?apiKey={api_key}&sessionId={session.id}"
+        )
+        async with async_playwright() as pw:
+            browser = await pw.chromium.connect_over_cdp(cdp_url)
+            ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            await page.goto(start_url, wait_until="domcontentloaded", timeout=30_000)
+            # disconnect() closes the WebSocket without sending Browser.close —
+            # the remote Browserbase session and its pages stay alive.
+            await browser.disconnect()
+    except Exception as nav_err:
+        # Non-fatal — user can navigate manually inside the live view.
+        logger.warning("Phase 1 navigation failed (user can navigate manually): %s", nav_err)
 
     # Prefer the live view URL from the session object; fall back to the
     # constructed URL if the SDK doesn't expose live_urls on this version.
@@ -124,15 +130,23 @@ async def create_connect_session(
 
 
 def _extract_live_view_url(session) -> str:
-    """Pull the live view URL from the Browserbase session object."""
+    """
+    Return the embeddable HTTPS live-view URL from the Browserbase session object.
+
+    The Python SDK uses snake_case: live_view (HTTPS, embeddable in iframe).
+    The `live` attribute is a wss:// CDP WebSocket URL — not usable in an iframe.
+    """
     try:
         live_urls = getattr(session, "live_urls", None)
         if live_urls:
-            url = getattr(live_urls, "live", None) or getattr(live_urls, "liveView", None)
-            if url:
-                return url
+            # Prefer snake_case (current SDK), then camelCase (older SDK versions)
+            for attr in ("live_view", "liveView", "live"):
+                url = getattr(live_urls, attr, None)
+                if url and str(url).startswith("https://"):
+                    return str(url)
     except Exception:
         pass
+    # Fallback: the Browserbase web UI URL for this session (always embeddable)
     return f"https://www.browserbase.com/sessions/{session.id}"
 
 

@@ -51,10 +51,14 @@ async def connect(body: ConnectRequest):
 
     existing_ctx = await redis_service.get_bb_context(body.user_id, body.platform)
 
-    result = await browserbase_service.create_connect_session(
-        platform=body.platform,
-        existing_context_id=existing_ctx,
-    )
+    try:
+        result = await browserbase_service.create_connect_session(
+            platform=body.platform,
+            existing_context_id=existing_ctx,
+        )
+    except Exception as exc:
+        logger.error("create_connect_session failed for platform=%s: %s", body.platform, exc, exc_info=True)
+        raise HTTPException(502, f"Could not open Browserbase session: {exc}") from exc
 
     # Persist context so future syncs skip the login step
     await redis_service.save_bb_context(body.user_id, body.platform, result["context_id"])
