@@ -1,4 +1,4 @@
-import { reqColor } from "../lib/reqColors"
+import { reqColorAt } from "../lib/reqColors"
 
 interface ReqScore {
   name?: string
@@ -49,7 +49,7 @@ export function RequirementBars({ requirements, overall }: Props) {
               transition: "width 0.5s ease",
             }}
           >
-            {entries.map(([id, req]) => {
+            {entries.map(([id, req], i) => {
               const share =
                 totalScore > 0
                   ? (Math.max(0, req.score) / totalScore) * 100
@@ -60,7 +60,7 @@ export function RequirementBars({ requirements, overall }: Props) {
                   style={{
                     width: `${share}%`,
                     height: "100%",
-                    background: reqColor(id),
+                    background: reqColorAt(i),
                   }}
                 />
               )
@@ -84,9 +84,9 @@ export function RequirementBars({ requirements, overall }: Props) {
         </p>
 
         <div className="space-y-3">
-          {entries.map(([id, req]) => {
+          {entries.map(([id, req], i) => {
             const pct = Math.min(100, Math.max(0, req.score))
-            const color = reqColor(id)
+            const color = reqColorAt(i)
             const label = req.name ?? id
             return (
               <div key={id}>

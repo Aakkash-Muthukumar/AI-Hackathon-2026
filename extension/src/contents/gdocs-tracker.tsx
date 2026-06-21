@@ -15,7 +15,7 @@ import type { PlasmoCSConfig } from "plasmo"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { createRoot } from "react-dom/client"
 import { RequirementBars } from "../components/RequirementBars"
-import { reqColor } from "../lib/reqColors"
+import { reqColorAt } from "../lib/reqColors"
 import { BookOpen, RefreshCw, ChevronLeft, ChevronRight, Link2, LogOut } from "lucide-react"
 
 export const config: PlasmoCSConfig = {
@@ -411,7 +411,7 @@ function GDocsTrackerSidebar() {
                 transition: "width 0.5s ease",
               }}
             >
-              {entries.map(([id, req]) => {
+              {entries.map(([id, req], i) => {
                 const share = totalScore > 0 ? (Math.max(0, req.score) / totalScore) * 100 : 100 / entries.length
                 const label = req.name ?? id
                 return (
@@ -421,7 +421,7 @@ function GDocsTrackerSidebar() {
                     style={{
                       width: `${share}%`,
                       height: "100%",
-                      background: reqColor(id),
+                      background: reqColorAt(i),
                       transition: "width 0.5s ease",
                     }}
                   />

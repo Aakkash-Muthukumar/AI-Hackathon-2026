@@ -17,3 +17,9 @@ export function reqColor(id: string): string {
   for (let i = 0; i < id.length; i++) h = ((h * 31) + id.charCodeAt(i)) >>> 0
   return REQ_COLORS[h % REQ_COLORS.length]
 }
+
+/** Color by position so stacked segments read lightest → darkest, left to right.
+ *  Same index → same color in the sidebar and the Google Doc bottom bar. */
+export function reqColorAt(index: number): string {
+  return REQ_COLORS[index % REQ_COLORS.length]
+}
