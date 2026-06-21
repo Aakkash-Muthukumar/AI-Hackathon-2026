@@ -1,9 +1,12 @@
 import * as Sentry from "@sentry/browser"
 
-Sentry.init({
-  dsn: process.env.PLASMO_PUBLIC_SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-})
+const _sentryDsn = process.env.PLASMO_PUBLIC_SENTRY_DSN?.trim() ?? ""
+if (_sentryDsn && !_sentryDsn.includes("...")) {
+  Sentry.init({
+    dsn: _sentryDsn,
+    environment: process.env.NODE_ENV,
+  })
+}
 
 const API = process.env.PLASMO_PUBLIC_API_URL ?? "http://localhost:8000/api"
 

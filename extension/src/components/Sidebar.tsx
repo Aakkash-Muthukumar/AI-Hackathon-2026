@@ -28,16 +28,39 @@ export function Sidebar({ getDocumentContent }: Props) {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [selected, setSelected] = useState<Assignment | null>(null)
   const [evaluating, setEvaluating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
+  const loadAssignments = useCallback(() => {
+    setLoading(true)
+    setError(null)
     chrome.runtime.sendMessage({ type: "LIST_ASSIGNMENTS" }, (res) => {
-      if (res?.ok && res.data.length > 0) {
-        setAssignments(res.data)
-        setSelected(res.data[0])
+      setLoading(false)
+      if (chrome.runtime.lastError) {
+        setError(chrome.runtime.lastError.message ?? "Extension error")
+        return
+      }
+      if (!res?.ok) {
+        setError(res?.error ?? "Could not load assignments")
+        return
+      }
+      setAssignments(res.data)
+      if (res.data.length > 0) {
+        setSelected((prev) =>
+          prev && res.data.some((a: Assignment) => a.id === prev.id)
+            ? res.data.find((a: Assignment) => a.id === prev.id)!
+            : res.data[0]
+        )
+      } else {
+        setSelected(null)
       }
     })
   }, [])
+
+  useEffect(() => {
+    loadAssignments()
+  }, [loadAssignments])
 
   const scheduleEval = useCallback(() => {
     if (!selected) return
@@ -117,12 +140,12 @@ export function Sidebar({ getDocumentContent }: Props) {
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button
-            onClick={manualEval}
-            disabled={evaluating}
-            title="Refresh progress"
+            onClick={loadAssignments}
+            disabled={loading}
+            title="Reload assignments"
             style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 2 }}
           >
-            <RefreshCw size={14} style={{ animation: evaluating ? "spin 1s linear infinite" : "none" }} />
+            <RefreshCw size={14} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
           </button>
           <button
             onClick={() => setCollapsed(true)}
@@ -156,7 +179,11 @@ export function Sidebar({ getDocumentContent }: Props) {
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
         {!selected ? (
           <p style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-            No assignment selected.<br />Add one at scaffold.app
+            {loading
+              ? "Loading assignments…"
+              : error
+              ? error
+              : <>No assignments yet.<br />Add one in the dashboard, then click refresh.</>}
           </p>
         ) : (
           <>
